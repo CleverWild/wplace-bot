@@ -1234,7 +1234,8 @@ class WorldPosition {
     this.anchor2Index = 1;
     let min1 = Infinity;
     let min2 = Infinity;
-    for (let index = 0;index < FAVORITE_LOCATIONS_POSITIONS.length; index++) {
+    const anchors = Math.min(FAVORITE_LOCATIONS_POSITIONS.length, this.bot.$stars.length);
+    for (let index = 0;index < anchors; index++) {
       const { x, y } = FAVORITE_LOCATIONS_POSITIONS[index];
       if (x < this.globalX && y < this.globalY) {
         const delta = this.globalX - x + (this.globalY - y);
@@ -2644,11 +2645,13 @@ class WPlaceBot {
       const $canvasContainer = await this.waitForElement(".maplibregl-canvas-container");
       progress(0.03);
       new MutationObserver((mutations) => {
-        for (let index = 0;index < mutations.length; index++)
-          if (mutations[index].removedNodes.length !== 0) {
+        for (let index = 0;index < mutations.length; index++) {
+          const mutation = mutations[index];
+          if (mutation.removedNodes.length !== 0 || mutation.addedNodes.length !== 0) {
             this.updateStars();
             break;
           }
+        }
         for (let index = 0;index < this.images.length; index++)
           this.images[index].updateUI();
       }).observe($canvasContainer, {
@@ -2953,8 +2956,16 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         changed = true;
       }
     }
-    if (templates.size !== 0)
-      this.widget.status = `ℹ️ ${templates.size} new template(s), reload to import`;
+    if (templates.size !== 0) {
+      const fresh = [...templates].map(([id, data]) => ({ id, data }));
+      for (let index = 0;index < fresh.length; index++) {
+        const [x, y] = fresh[index].data.position;
+        addFavoriteLocation({ x: x - 1000, y: y - 1000 });
+        addFavoriteLocation({ x: x + 1000, y: y + 1000 });
+      }
+      await this.importSiteTemplates(fresh);
+      changed = true;
+    }
     if (changed) {
       this.widget.update();
       await save(this, true);
@@ -3059,9 +3070,13 @@ Developer will try to fix your save. Be vary that github issues are public, and 
     });
   }
   updateStars() {
+    const previous = this.$stars.length;
     this.$stars = [
       ...document.querySelectorAll(".text-yellow-400.cursor-pointer.z-10.maplibregl-marker.maplibregl-marker-anchor-center")
     ].slice(0, FAVORITE_LOCATIONS.length);
+    if (this.$stars.length !== previous)
+      for (let index = 0;index < this.images.length; index++)
+        this.images[index].position.updateAnchor();
   }
   async zoomIn(zoom, canvas = document.querySelector(".maplibregl-canvas")) {
     const position = new WorldPosition(this, WORLD_PIXEL_SIZE / 2, WORLD_PIXEL_SIZE / 2);

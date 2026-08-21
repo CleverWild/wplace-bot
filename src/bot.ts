@@ -158,12 +158,17 @@ export class WPlaceBot {
         )
         progress(0.03)
         new MutationObserver((mutations: MutationRecord[]) => {
-          // If elements were removed, update stars
-          for (let index = 0; index < mutations.length; index++)
-            if (mutations[index]!.removedNodes.length !== 0) {
+          // Stars come and go as wplace re-renders markers
+          for (let index = 0; index < mutations.length; index++) {
+            const mutation = mutations[index]!
+            if (
+              mutation.removedNodes.length !== 0 ||
+              mutation.addedNodes.length !== 0
+            ) {
               this.updateStars()
               break
             }
+          }
           for (let index = 0; index < this.images.length; index++)
             this.images[index]!.updateUI()
         }).observe($canvasContainer, {
@@ -559,10 +564,19 @@ export class WPlaceBot {
         changed = true
       }
     }
-    // A template added after load has no anchors, and anchors only reach the
-    // map through /me on page load
-    if (templates.size !== 0)
-      this.widget.status = `ℹ️ ${templates.size} new template(s), reload to import`
+    if (templates.size !== 0) {
+      // Anchors for these only reach the map with the next /me, which wplace
+      // sends after a server-confirmed action. Until then they position off
+      // the existing ones, which measured under 0.1 map pixels of drift.
+      const fresh = [...templates].map(([id, data]) => ({ id, data }))
+      for (let index = 0; index < fresh.length; index++) {
+        const [x, y] = fresh[index]!.data.position
+        addFavoriteLocation({ x: x - 1000, y: y - 1000 })
+        addFavoriteLocation({ x: x + 1000, y: y + 1000 })
+      }
+      await this.importSiteTemplates(fresh)
+      changed = true
+    }
     if (changed) {
       this.widget.update()
       await save(this, true)
@@ -711,11 +725,17 @@ export class WPlaceBot {
 
   /** Simply update $stars property */
   protected updateStars() {
+    const previous = this.$stars.length
     this.$stars = [
       ...document.querySelectorAll<HTMLDivElement>(
         '.text-yellow-400.cursor-pointer.z-10.maplibregl-marker.maplibregl-marker-anchor-center',
       ),
     ].slice(0, FAVORITE_LOCATIONS.length)
+    // A changed count means anchors arrived (or left) with a /me, so images
+    // can pick better ones
+    if (this.$stars.length !== previous)
+      for (let index = 0; index < this.images.length; index++)
+        this.images[index]!.position.updateAnchor()
   }
 
   /** Zoom in canvas */

@@ -163,7 +163,13 @@ export class WorldPosition {
     this.anchor2Index = 1
     let min1 = Infinity
     let min2 = Infinity
-    for (let index = 0; index < FAVORITE_LOCATIONS_POSITIONS.length; index++) {
+    // Anchors added after load have no star on the map yet, and reading one
+    // would throw. They start counting once /me delivers them.
+    const anchors = Math.min(
+      FAVORITE_LOCATIONS_POSITIONS.length,
+      this.bot.$stars.length,
+    )
+    for (let index = 0; index < anchors; index++) {
       const { x, y } = FAVORITE_LOCATIONS_POSITIONS[index]!
       if (x < this.globalX && y < this.globalY) {
         const delta = this.globalX - x + (this.globalY - y)
