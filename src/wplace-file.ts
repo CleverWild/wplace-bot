@@ -120,6 +120,11 @@ export function readSiteTemplates() {
 export async function readSiteTemplateImage(id: string) {
   const db = await new Promise<IDBDatabase | undefined>((resolve) => {
     const request = indexedDB.open(TEMPLATES_DB)
+    // Opening a database that isn't there creates it. An empty one would stop
+    // their own code from ever running its upgrade, so back out instead.
+    request.onupgradeneeded = () => {
+      request.transaction?.abort()
+    }
     request.onsuccess = () => {
       resolve(request.result)
     }

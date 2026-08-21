@@ -186,6 +186,8 @@ export class WPlaceBot {
           }
         }
         await this.importSiteTemplates(newTemplates)
+        // Catch up on anything that changed while the tab was closed
+        await this.syncSiteTemplates()
         this.watchSiteTemplates()
         // Unblock buttons
         this.widget.setDisabled('draw', false)
@@ -523,14 +525,18 @@ export class WPlaceBot {
    */
   protected watchSiteTemplates() {
     let snapshot = localStorage.getItem(OVERLAYS_KEY)
+    let syncing = false
     // The bot lives as long as the page does, so this is never cleared
     setInterval(() => {
       // Syncing deletes images, which would derail the draw loop
-      if (this.drawing) return
+      if (this.drawing || syncing) return
       const current = localStorage.getItem(OVERLAYS_KEY)
       if (current === snapshot) return
       snapshot = current
-      void this.syncSiteTemplates()
+      syncing = true
+      void this.syncSiteTemplates().finally(() => {
+        syncing = false
+      })
     }, 1000)
   }
 

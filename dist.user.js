@@ -1322,6 +1322,9 @@ function readSiteTemplates() {
 async function readSiteTemplateImage(id) {
   const db = await new Promise((resolve) => {
     const request = indexedDB.open(TEMPLATES_DB);
+    request.onupgradeneeded = () => {
+      request.transaction?.abort();
+    };
     request.onsuccess = () => {
       resolve(request.result);
     };
@@ -2667,6 +2670,7 @@ class WPlaceBot {
         }
       }
       await this.importSiteTemplates(newTemplates);
+      await this.syncSiteTemplates();
       this.watchSiteTemplates();
       this.widget.setDisabled("draw", false);
       this.widget.setDisabled("auto-draw", false);
@@ -2918,14 +2922,18 @@ Developer will try to fix your save. Be vary that github issues are public, and 
   }
   watchSiteTemplates() {
     let snapshot = localStorage.getItem(OVERLAYS_KEY);
+    let syncing = false;
     setInterval(() => {
-      if (this.drawing)
+      if (this.drawing || syncing)
         return;
       const current = localStorage.getItem(OVERLAYS_KEY);
       if (current === snapshot)
         return;
       snapshot = current;
-      this.syncSiteTemplates();
+      syncing = true;
+      this.syncSiteTemplates().finally(() => {
+        syncing = false;
+      });
     }, 1000);
   }
   async syncSiteTemplates() {
