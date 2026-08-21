@@ -394,6 +394,7 @@ var image_default = `<div class="topbar">\r
       </select>\r
     </label>\r
     <button class="reset-size">Reset size [<span></span>px]</button>\r
+    <button class="reset-aspect">Reset aspect ratio</button>\r
     <label>\r
       <input type="checkbox" class="draw-transparent" />&nbsp;Erase transparent pixels\r
     </label>\r
@@ -507,6 +508,7 @@ function migrateImage(old) {
     return {
       url,
       width,
+      height: undefined,
       brightness,
       position: old.position,
       strategy: "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */,
@@ -1285,6 +1287,7 @@ function placement(template) {
   return {
     position: [globalX, globalY],
     width: Math.max(1, Math.round(longitudeToWorld(bounds.east)) - globalX),
+    height: Math.max(1, Math.round(latitudeToWorld(bounds.south)) - globalY),
     opacity: typeof template.opacity === "number" ? Math.round(template.opacity * 100) : undefined,
     lock: template.locked,
     disabled: template.visible === false,
@@ -1395,6 +1398,7 @@ class BotImage extends Base2 {
   position;
   image;
   width;
+  heightOverride;
   brightness;
   strategy;
   opacity;
@@ -1415,7 +1419,7 @@ class BotImage extends Base2 {
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(image, 0, 0);
-    const botImage = new BotImage(bot, data.position ? WorldPosition.fromJSON(bot, data.position) : undefined, canvas, data.width, data.brightness, data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, new Set(data.disabledColors), data.lock, data.disabled, data.name, data.unownedColorStrategy, data.wplaceId);
+    const botImage = new BotImage(bot, data.position ? WorldPosition.fromJSON(bot, data.position) : undefined, canvas, data.width, data.height, data.brightness, data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, new Set(data.disabledColors), data.lock, data.disabled, data.name, data.unownedColorStrategy, data.wplaceId);
     await botImage.updatePixels(progress);
     return botImage;
   }
@@ -1423,10 +1427,10 @@ class BotImage extends Base2 {
   resolution;
   colorsStat = new Map;
   get height() {
-    return this.width / this.resolution | 0;
+    return this.heightOverride ?? this.width / this.resolution | 0;
   }
   set height(value) {
-    this.width = value * this.resolution | 0;
+    this.heightOverride = value;
   }
   tasks = new Uint32Array(0);
   moveInfo;
@@ -1445,6 +1449,7 @@ class BotImage extends Base2 {
   $progressLine;
   $progressText;
   $resetSize;
+  $resetAspect;
   $resetSizeSpan;
   $settings;
   $strategy;
@@ -1459,12 +1464,13 @@ class BotImage extends Base2 {
   constructor(bot, position = WorldPosition.fromScreenPosition(bot, {
     x: 256,
     y: 32
-  }), image, width = image.width, brightness = 0, strategy = "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */, opacity = 50, drawTransparentPixels = false, drawColorsInOrder = true, colors = [], disabledColors = new Set, lock = false, disabled = false, name = `${image.width}x${image.height}`, unownedColorStrategy = "BUY" /* BUY */, wplaceId) {
+  }), image, width = image.width, heightOverride, brightness = 0, strategy = "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */, opacity = 50, drawTransparentPixels = false, drawColorsInOrder = true, colors = [], disabledColors = new Set, lock = false, disabled = false, name = `${image.width}x${image.height}`, unownedColorStrategy = "BUY" /* BUY */, wplaceId) {
     super();
     this.bot = bot;
     this.position = position;
     this.image = image;
     this.width = width;
+    this.heightOverride = heightOverride;
     this.brightness = brightness;
     this.strategy = strategy;
     this.opacity = opacity;
@@ -1495,6 +1501,7 @@ class BotImage extends Base2 {
       $progressLine: ".progress div",
       $progressText: ".progress span",
       $resetSize: ".reset-size",
+      $resetAspect: ".reset-aspect",
       $settings: ".form",
       $strategy: ".strategy",
       $exportDialog: ".export-dialog",
@@ -1543,6 +1550,12 @@ class BotImage extends Base2 {
     });
     this.$resetSize.addEventListener("click", async () => {
       this.width = this.image.width;
+      this.heightOverride = undefined;
+      await this.updatePixels();
+      await save(this.bot);
+    });
+    this.$resetAspect.addEventListener("click", async () => {
+      this.heightOverride = undefined;
       await this.updatePixels();
       await save(this.bot);
     });
@@ -1616,6 +1629,7 @@ class BotImage extends Base2 {
     return {
       url,
       width: this.width,
+      height: this.heightOverride,
       brightness: this.brightness,
       position: this.position.toJSON(),
       strategy: this.strategy,
@@ -1635,13 +1649,14 @@ class BotImage extends Base2 {
   async applySiteTemplate(data) {
     const [globalX, globalY] = data.position;
     const disabled = data.disabled;
-    const moved = this.position.globalX !== globalX || this.position.globalY !== globalY || this.width !== data.width;
+    const moved = this.position.globalX !== globalX || this.position.globalY !== globalY || this.width !== data.width || this.height !== data.height;
     const redraw = moved || this.disabled !== disabled;
     if (!redraw && this.name === (data.name ?? this.name) && this.lock === (data.lock ?? this.lock))
       return false;
     this.position.globalX = globalX;
     this.position.globalY = globalY;
     this.width = data.width;
+    this.height = data.height;
     this.disabled = disabled;
     if (data.name !== undefined)
       this.name = data.name;
@@ -1706,10 +1721,11 @@ class BotImage extends Base2 {
     const { x, y } = this.position.toScreenPosition();
     this.element.style.transform = `translate(${x}px, ${y}px)`;
     this.element.style.width = `${this.position.pixelSize * this.width}px`;
+    this.$canvas.style.height = `${this.position.pixelSize * this.height}px`;
     this.$wrapper.style.opacity = this.disabled ? "0.4" : "1";
     this.$canvas.style.opacity = `${this.opacity}%`;
     removeClass(this.element, "hidden");
-    this.$resetSizeSpan.textContent = this.width.toString();
+    this.$resetSizeSpan.textContent = `${this.width}x${this.height}`;
     this.$brightness.valueAsNumber = this.brightness;
     this.$strategy.value = this.strategy;
     this.$opacity.valueAsNumber = this.opacity;
@@ -2347,7 +2363,8 @@ dialog.export-dialog::backdrop {\r
 .image.managed .resize,\r
 .image.managed .lock,\r
 .image.managed .delete,\r
-.image.managed .reset-size {\r
+.image.managed .reset-size,\r
+.image.managed .reset-aspect {\r
   display: none;\r
 }\r
 \r

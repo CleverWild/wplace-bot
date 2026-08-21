@@ -117,6 +117,7 @@ export function migrateImage(
     return {
       url,
       width,
+      height: undefined,
       brightness,
       position: old.position,
       strategy: ImageStrategy.SPIRAL_TO_CENTER,

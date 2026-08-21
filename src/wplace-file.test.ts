@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 
 import { type BotImage } from './image'
+import { worldToLatitude, worldToLongitude } from './world-position'
 import { fromWplaceFile, readSiteTemplates, toWplaceFile } from './wplace-file'
 
 /** Bounds of a real template exported by wplace, 920x1250 drawn as 92x125 */
@@ -22,9 +23,30 @@ test('import keeps position and on-map scale', () => {
   })
   expect(data.position).toEqual([1_078_206, 704_428])
   expect(data.width).toBe(92)
+  expect(data.height).toBe(125)
   expect(data.opacity).toBe(50)
   expect(data.lock).toBe(true)
   expect(data.disabled).toBe(true)
+})
+
+test('import preserves non-uniform scale from bounds, not image aspect', () => {
+  // Deliberately stretched: 100 wide, 300 tall in world pixels, from a square
+  // source image. Height must come from the bounds, not the 1:1 image.
+  const x = 1_000_000
+  const y = 500_000
+  const w = 100
+  const h = 300
+  const data = fromWplaceFile({
+    image: { dataUrl: 'data:image/png;base64,x', width: 50, height: 50 },
+    bounds: {
+      north: worldToLatitude(y),
+      south: worldToLatitude(y + h),
+      west: worldToLongitude(x),
+      east: worldToLongitude(x + w),
+    },
+  })
+  expect(data.width).toBe(w)
+  expect(data.height).toBe(h)
 })
 
 test('rejects a file without bounds', () => {
@@ -48,6 +70,7 @@ test('export round-trips back to the same pixels', () => {
   const data = fromWplaceFile(file)
   expect(data.position).toEqual([1_078_206, 704_428])
   expect(data.width).toBe(92)
+  expect(data.height).toBe(125)
   expect(data.opacity).toBe(50)
 })
 

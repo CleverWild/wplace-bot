@@ -412,7 +412,8 @@ dialog.export-dialog::backdrop {
 .image.managed .resize,
 .image.managed .lock,
 .image.managed .delete,
-.image.managed .reset-size {
+.image.managed .reset-size,
+.image.managed .reset-aspect {
   display: none;
 }
 

@@ -78,6 +78,7 @@ export class BotImage extends Base {
       data.position ? WorldPosition.fromJSON(bot, data.position) : undefined,
       canvas,
       data.width,
+      data.height,
       data.brightness,
       data.strategy,
       data.opacity,
@@ -99,11 +100,16 @@ export class BotImage extends Base {
   public readonly resolution: number
   public colorsStat = new Map<number, PixelColorStat>()
 
+  /**
+   * Drawn height. Unset means "follow the source aspect ratio", so an image
+   * that was never stretched behaves exactly as before. A free-form vertical
+   * resize sets an override, decoupling height from width.
+   */
   public get height() {
-    return (this.width / this.resolution) | 0
+    return this.heightOverride ?? (this.width / this.resolution) | 0
   }
   public set height(value: number) {
-    this.width = (value * this.resolution) | 0
+    this.heightOverride = value
   }
 
   /** Pixels to draw */
@@ -135,6 +141,7 @@ export class BotImage extends Base {
   protected readonly $progressLine!: HTMLDivElement
   protected readonly $progressText!: HTMLSpanElement
   protected readonly $resetSize!: HTMLButtonElement
+  protected readonly $resetAspect!: HTMLButtonElement
   protected readonly $resetSizeSpan!: HTMLSpanElement
   protected readonly $settings!: HTMLDivElement
   protected readonly $strategy!: HTMLSelectElement
@@ -158,6 +165,8 @@ export class BotImage extends Base {
     public readonly image: OffscreenCanvas,
     /** Width of drawn image */
     public width = image.width,
+    /** Independent drawn height. Unset follows the source aspect ratio */
+    public heightOverride?: number,
     /** Brightness of image */
     public brightness = 0,
     /** Order of pixels to draw */
@@ -210,6 +219,7 @@ export class BotImage extends Base {
       $progressLine: '.progress div',
       $progressText: '.progress span',
       $resetSize: '.reset-size',
+      $resetAspect: '.reset-aspect',
       $settings: '.form',
       $strategy: '.strategy',
       $exportDialog: '.export-dialog',
@@ -273,6 +283,14 @@ export class BotImage extends Base {
     // Reset
     this.$resetSize.addEventListener('click', async () => {
       this.width = this.image.width
+      this.heightOverride = undefined
+      await this.updatePixels()
+      await save(this.bot)
+    })
+
+    // Restore the source aspect ratio, keeping the current width
+    this.$resetAspect.addEventListener('click', async () => {
+      this.heightOverride = undefined
       await this.updatePixels()
       await save(this.bot)
     })
@@ -377,6 +395,7 @@ export class BotImage extends Base {
     return {
       url,
       width: this.width,
+      height: this.heightOverride,
       brightness: this.brightness,
       position: this.position.toJSON(),
       strategy: this.strategy,
@@ -404,7 +423,8 @@ export class BotImage extends Base {
     const moved =
       this.position.globalX !== globalX ||
       this.position.globalY !== globalY ||
-      this.width !== data.width
+      this.width !== data.width ||
+      this.height !== data.height
     const redraw = moved || this.disabled !== disabled
     if (
       !redraw &&
@@ -415,6 +435,7 @@ export class BotImage extends Base {
     this.position.globalX = globalX
     this.position.globalY = globalY
     this.width = data.width
+    this.height = data.height
     this.disabled = disabled
     if (data.name !== undefined) this.name = data.name
     if (data.lock !== undefined) this.lock = data.lock
@@ -483,11 +504,14 @@ export class BotImage extends Base {
     const { x, y } = this.position.toScreenPosition()
     this.element.style.transform = `translate(${x}px, ${y}px)`
     this.element.style.width = `${this.position.pixelSize * this.width}px`
+    // Height is free-form, so drive it too; otherwise a vertical resize would
+    // only preview on the next redraw (mouseup) instead of live
+    this.$canvas.style.height = `${this.position.pixelSize * this.height}px`
     this.$wrapper.style.opacity = this.disabled ? '0.4' : '1'
     this.$canvas.style.opacity = `${this.opacity}%`
     removeClass(this.element, 'hidden')
 
-    this.$resetSizeSpan.textContent = this.width.toString()
+    this.$resetSizeSpan.textContent = `${this.width}x${this.height}`
     this.$brightness.valueAsNumber = this.brightness
     this.$strategy.value = this.strategy
     this.$opacity.valueAsNumber = this.opacity

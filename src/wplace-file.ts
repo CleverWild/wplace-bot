@@ -41,6 +41,7 @@ export type WplaceFile = {
 export type SiteTemplateData = {
   position: [number, number]
   width: number
+  height: number
   opacity?: number
   lock?: boolean
   disabled: boolean
@@ -62,6 +63,8 @@ function placement(template: Partial<WplaceFile>): SiteTemplateData {
   return {
     position: [globalX, globalY] as [number, number],
     width: Math.max(1, Math.round(longitudeToWorld(bounds.east)) - globalX),
+    // Height from the bounds too, so a stretched template keeps its shape
+    height: Math.max(1, Math.round(latitudeToWorld(bounds.south)) - globalY),
     opacity:
       typeof template.opacity === 'number'
         ? Math.round(template.opacity * 100)
