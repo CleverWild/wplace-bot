@@ -2,7 +2,7 @@ import { wait } from '@softsky/utils'
 
 import { BotImage, UnownedColorStrategy } from './image'
 import { obfuscateCSS } from './obfuscator'
-import { DELETE_ALL_DATA, loadSave, SAVE_VERSION } from './save'
+import { DELETE_ALL_DATA, loadSave, save, SAVE_VERSION } from './save'
 // @ts-ignore
 import css from './style.css' with { type: 'text' }
 import { BotStrategy, Widget } from './widget'
@@ -16,6 +16,11 @@ import {
   WORLD_PIXEL_SIZE,
   WorldPosition,
 } from './world-position'
+import {
+  OVERLAYS_KEY,
+  readSiteTemplateImage,
+  readSiteTemplates,
+} from './wplace-file'
 
 export type Me = {
   allianceId: number
@@ -81,6 +86,9 @@ export class WPlaceBot {
   /** Autodraw interval */
   public autoDrawInterval?: ReturnType<typeof setInterval>
 
+  /** True while draw() walks this.images */
+  protected drawing = false
+
   public widget = new Widget(this)
 
   /** Used to wait for pixel data on marker set */
@@ -110,6 +118,18 @@ export class WPlaceBot {
       this.title = save.title
     } else {
       this.title = 'WPlace-bot'
+    }
+
+    // Templates placed in wplace's own manager that aren't in the save yet.
+    // Read here, before the interceptor, so their anchors reach /me.
+    const known = new Set(save?.images.map((image) => image.wplaceId))
+    const newTemplates = readSiteTemplates().filter(
+      (template) => !known.has(template.id),
+    )
+    for (let index = 0; index < newTemplates.length; index++) {
+      const [x, y] = newTemplates[index]!.data.position
+      addFavoriteLocation({ x: x - 1000, y: y - 1000 })
+      addFavoriteLocation({ x: x + 1000, y: y + 1000 })
     }
 
     this.registerFetchInterceptor()
@@ -165,6 +185,8 @@ export class WPlaceBot {
             })
           }
         }
+        await this.importSiteTemplates(newTemplates)
+        this.watchSiteTemplates()
         // Unblock buttons
         this.widget.setDisabled('draw', false)
         this.widget.setDisabled('auto-draw', false)
@@ -215,6 +237,7 @@ export class WPlaceBot {
       async (progress) => {
         const firstImage = this.images[0]
         if (!firstImage) return
+        this.drawing = true
 
         // Stop mouse messing with drawing by capturing event
         globalThis.addEventListener('mousemove', prevent, true)
@@ -415,6 +438,7 @@ export class WPlaceBot {
         this.widget.update()
       },
       () => {
+        this.drawing = false
         globalThis.removeEventListener('mousemove', prevent, true)
         $canvas.removeEventListener('wheel', prevent, true)
         this.widget.setDisabled('draw', false)
@@ -463,6 +487,79 @@ export class WPlaceBot {
       images: await Promise.all(this.images.map((x) => x.toJSON())),
       strategy: this.strategy,
       title: this.title,
+    }
+  }
+
+  /** Pull templates out of wplace's own manager */
+  protected async importSiteTemplates(
+    templates: ReturnType<typeof readSiteTemplates>,
+  ) {
+    if (templates.length === 0) return
+    await this.widget.run('Importing templates', async (progress) => {
+      const batchSize = 1 / templates.length
+      for (let index = 0; index < templates.length; index++) {
+        const template = templates[index]!
+        const url = await readSiteTemplateImage(template.id)
+        if (!url) continue
+        await BotImage.fromJSON(
+          this,
+          // Opacity stays ours: the site draws its own overlay, so ours is
+          // hidden until the user wants to compare
+          { ...template.data, opacity: 0, url, wplaceId: template.id },
+          (p) => {
+            progress(index * batchSize + p * batchSize)
+          },
+        )
+      }
+    })
+    await save(this, true)
+  }
+
+  /**
+   * Follow wplace's template manager.
+   * Its writes to localStorage fire no event in the tab that made them, so
+   * this polls. Comparing the raw string first keeps it to a string compare
+   * on the vast majority of ticks.
+   */
+  protected watchSiteTemplates() {
+    let snapshot = localStorage.getItem(OVERLAYS_KEY)
+    // The bot lives as long as the page does, so this is never cleared
+    setInterval(() => {
+      // Syncing deletes images, which would derail the draw loop
+      if (this.drawing) return
+      const current = localStorage.getItem(OVERLAYS_KEY)
+      if (current === snapshot) return
+      snapshot = current
+      void this.syncSiteTemplates()
+    }, 1000)
+  }
+
+  /** Make our copies match the site's templates */
+  protected async syncSiteTemplates() {
+    const templates = new Map(
+      readSiteTemplates().map((template) => [template.id, template.data]),
+    )
+    let changed = false
+    for (let index = this.images.length - 1; index >= 0; index--) {
+      const image = this.images[index]!
+      if (!image.wplaceId) continue
+      const data = templates.get(image.wplaceId)
+      if (data) {
+        templates.delete(image.wplaceId)
+        if (await image.applySiteTemplate(data)) changed = true
+      } else {
+        // Removed on the site, so it goes here too
+        image.destroy()
+        changed = true
+      }
+    }
+    // A template added after load has no anchors, and anchors only reach the
+    // map through /me on page load
+    if (templates.size !== 0)
+      this.widget.status = `ℹ️ ${templates.size} new template(s), reload to import`
+    if (changed) {
+      this.widget.update()
+      await save(this, true)
     }
   }
 

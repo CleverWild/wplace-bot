@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 
 import { type BotImage } from './image'
-import { fromWplaceFile, toWplaceFile } from './wplace-file'
+import { fromWplaceFile, readSiteTemplates, toWplaceFile } from './wplace-file'
 
 /** Bounds of a real template exported by wplace, 920x1250 drawn as 92x125 */
 const BOUNDS = {
@@ -49,4 +49,22 @@ test('export round-trips back to the same pixels', () => {
   expect(data.position).toEqual([1_078_206, 704_428])
   expect(data.width).toBe(92)
   expect(data.opacity).toBe(50)
+})
+
+test('reads the site template manager, skipping unusable entries', () => {
+  const overlays = [
+    { id: 'keep', name: 'a', bounds: BOUNDS, opacity: 0.5, locked: false },
+    { id: 'no-bounds', name: 'b' },
+    { name: 'no-id', bounds: BOUNDS },
+    undefined,
+  ]
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: { getItem: () => JSON.stringify(overlays) },
+  })
+  const templates = readSiteTemplates()
+  expect(templates).toHaveLength(1)
+  expect(templates[0]!.id).toBe('keep')
+  expect(templates[0]!.data.position).toEqual([1_078_206, 704_428])
+  expect(templates[0]!.data.width).toBe(92)
 })

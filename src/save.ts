@@ -129,6 +129,7 @@ export function migrateImage(
       disabled: false,
       name: `Unnamed image`,
       unownedColorStrategy: UnownedColorStrategy.BUY,
+      wplaceId: undefined,
       version: 3,
     }
   }

@@ -407,3 +407,15 @@ dialog.export-dialog::backdrop {
   height: 1px;
   pointer-events: none;
 }
+
+/** Site-managed templates: the site owns placement, so hide our editors */
+.image.managed .resize,
+.image.managed .lock,
+.image.managed .delete,
+.image.managed .reset-size {
+  display: none;
+}
+
+.image.managed canvas {
+  cursor: default;
+}

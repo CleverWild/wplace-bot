@@ -21,7 +21,7 @@ import {
 import { save, SAVE_VERSION } from './save'
 import { workerPixels } from './worker-client'
 import { WorldPosition } from './world-position'
-import { toWplaceFile } from './wplace-file'
+import { type SiteTemplateData, toWplaceFile } from './wplace-file'
 
 export type DrawTask = {
   position: WorldPosition
@@ -89,6 +89,7 @@ export class BotImage extends Base {
       data.disabled,
       data.name,
       data.unownedColorStrategy,
+      data.wplaceId,
     )
     await botImage.updatePixels(progress)
     return botImage
@@ -179,6 +180,12 @@ export class BotImage extends Base {
     public name = `${image.width}x${image.height}`,
     /** What to do with colors that user does not own */
     public unownedColorStrategy = UnownedColorStrategy.BUY,
+    /**
+     * Id of the wplace template this image mirrors.
+     * The site owns everything it covers, so those controls are taken away
+     * from the user and overwritten whenever the template changes.
+     */
+    public readonly wplaceId?: string,
   ) {
     super()
     this.bot.images.push(this)
@@ -320,8 +327,12 @@ export class BotImage extends Base {
 
     this.bot.fixSpaceInInput(this.$name)
 
-    // Move
-    this.$canvas.addEventListener('mousedown', this.moveStart.bind(this))
+    // Anything the site owns is read-only here, or the next sync would just
+    // undo the edit
+    if (this.wplaceId) {
+      addClass(this.element, 'managed')
+      this.$name.readOnly = true
+    } else this.$canvas.addEventListener('mousedown', this.moveStart.bind(this))
 
     // Forward wheel event to scroll through image
     this.$wrapper.addEventListener('wheel', (event) =>
@@ -342,11 +353,12 @@ export class BotImage extends Base {
     this.registerEvent(document, 'mousemove', this.move.bind(this))
 
     // Resize
-    for (const $resize of querySelectorAll<HTMLDivElement>(
-      this.element,
-      '.resize',
-    ))
-      $resize.addEventListener('mousedown', this.resizeStart.bind(this))
+    if (!this.wplaceId)
+      for (const $resize of querySelectorAll<HTMLDivElement>(
+        this.element,
+        '.resize',
+      ))
+        $resize.addEventListener('mousedown', this.resizeStart.bind(this))
   }
 
   public async toJSON() {
@@ -377,8 +389,40 @@ export class BotImage extends Base {
       disabled: this.disabled,
       name: this.name,
       unownedColorStrategy: this.unownedColorStrategy,
+      wplaceId: this.wplaceId,
       version: SAVE_VERSION,
     }
+  }
+
+  /**
+   * Apply the site's version of this template.
+   * Returns whether anything actually changed.
+   */
+  public async applySiteTemplate(data: SiteTemplateData) {
+    const [globalX, globalY] = data.position
+    const disabled = data.disabled
+    const moved =
+      this.position.globalX !== globalX ||
+      this.position.globalY !== globalY ||
+      this.width !== data.width
+    const redraw = moved || this.disabled !== disabled
+    if (
+      !redraw &&
+      this.name === (data.name ?? this.name) &&
+      this.lock === (data.lock ?? this.lock)
+    )
+      return false
+    this.position.globalX = globalX
+    this.position.globalY = globalY
+    this.width = data.width
+    this.disabled = disabled
+    if (data.name !== undefined) this.name = data.name
+    if (data.lock !== undefined) this.lock = data.lock
+    if (redraw) {
+      this.position.updateAnchor()
+      await this.updatePixels()
+    } else this.updateUI()
+    return true
   }
 
   /** Calculates everything we need to do. Very expensive task! */

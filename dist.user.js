@@ -519,6 +519,7 @@ function migrateImage(old) {
       disabled: false,
       name: `Unnamed image`,
       unownedColorStrategy: "BUY" /* BUY */,
+      wplaceId: undefined,
       version: 3
     };
   }
@@ -1274,22 +1275,86 @@ class WorldPosition {
 }
 
 // src/wplace-file.ts
-function fromWplaceFile(raw) {
-  const file = raw;
-  const bounds = file.bounds;
-  if (typeof file.image?.dataUrl !== "string" || !bounds || [bounds.north, bounds.south, bounds.west, bounds.east].some((x) => typeof x !== "number" || !Number.isFinite(x)))
-    throw new Error("Not a valid .wplace template");
+function placement(template) {
+  const bounds = template.bounds;
+  if (!bounds || [bounds.north, bounds.south, bounds.west, bounds.east].some((x) => typeof x !== "number" || !Number.isFinite(x)))
+    throw new Error("Template has no usable bounds");
   const globalX = Math.round(longitudeToWorld(bounds.west));
   const globalY = Math.round(latitudeToWorld(bounds.north));
   return {
-    url: file.image.dataUrl,
     position: [globalX, globalY],
     width: Math.max(1, Math.round(longitudeToWorld(bounds.east)) - globalX),
-    opacity: typeof file.opacity === "number" ? Math.round(file.opacity * 100) : undefined,
-    lock: file.locked,
-    disabled: file.visible === false,
-    name: file.name
+    opacity: typeof template.opacity === "number" ? Math.round(template.opacity * 100) : undefined,
+    lock: template.locked,
+    disabled: template.visible === false,
+    name: template.name
   };
+}
+function fromWplaceFile(raw) {
+  const file = raw;
+  if (typeof file.image?.dataUrl !== "string")
+    throw new Error("Not a valid .wplace template");
+  return { ...placement(file), url: file.image.dataUrl };
+}
+var OVERLAYS_KEY = "template-overlays";
+var TEMPLATES_DB = "wplace-templates";
+var TEMPLATES_STORE = "images";
+function readSiteTemplates() {
+  let overlays;
+  try {
+    overlays = JSON.parse(localStorage.getItem(OVERLAYS_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(overlays))
+    return [];
+  const templates = [];
+  for (let index = 0;index < overlays.length; index++) {
+    const overlay = overlays[index];
+    if (typeof overlay?.id !== "string")
+      continue;
+    try {
+      templates.push({ id: overlay.id, data: placement(overlay) });
+    } catch {}
+  }
+  return templates;
+}
+async function readSiteTemplateImage(id) {
+  const db = await new Promise((resolve) => {
+    const request = indexedDB.open(TEMPLATES_DB);
+    request.onsuccess = () => {
+      resolve(request.result);
+    };
+    request.onerror = () => {
+      resolve(undefined);
+    };
+  });
+  if (!db?.objectStoreNames.contains(TEMPLATES_STORE)) {
+    db?.close();
+    return;
+  }
+  const blob = await new Promise((resolve) => {
+    const request = db.transaction(TEMPLATES_STORE, "readonly").objectStore(TEMPLATES_STORE).get(id);
+    request.onsuccess = () => {
+      resolve(request.result);
+    };
+    request.onerror = () => {
+      resolve(undefined);
+    };
+  });
+  db.close();
+  if (!blob)
+    return;
+  return new Promise((resolve) => {
+    const reader = new FileReader;
+    reader.onload = () => {
+      resolve(reader.result);
+    };
+    reader.onerror = () => {
+      resolve(undefined);
+    };
+    reader.readAsDataURL(blob);
+  });
 }
 function toWplaceFile(image, order = 0) {
   const { globalX, globalY } = image.position;
@@ -1337,6 +1402,7 @@ class BotImage extends Base2 {
   disabled;
   name;
   unownedColorStrategy;
+  wplaceId;
   static async fromJSON(bot, data, progress) {
     const image = new Image;
     image.src = data.url.startsWith("http") ? await fetch(data.url, { cache: "no-store" }).then((x) => x.blob()).then((x) => URL.createObjectURL(x)) : data.url;
@@ -1345,7 +1411,7 @@ class BotImage extends Base2 {
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(image, 0, 0);
-    const botImage = new BotImage(bot, data.position ? WorldPosition.fromJSON(bot, data.position) : undefined, canvas, data.width, data.brightness, data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, new Set(data.disabledColors), data.lock, data.disabled, data.name, data.unownedColorStrategy);
+    const botImage = new BotImage(bot, data.position ? WorldPosition.fromJSON(bot, data.position) : undefined, canvas, data.width, data.brightness, data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, new Set(data.disabledColors), data.lock, data.disabled, data.name, data.unownedColorStrategy, data.wplaceId);
     await botImage.updatePixels(progress);
     return botImage;
   }
@@ -1389,7 +1455,7 @@ class BotImage extends Base2 {
   constructor(bot, position = WorldPosition.fromScreenPosition(bot, {
     x: 256,
     y: 32
-  }), image, width = image.width, brightness = 0, strategy = "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */, opacity = 50, drawTransparentPixels = false, drawColorsInOrder = true, colors = [], disabledColors = new Set, lock = false, disabled = false, name = `${image.width}x${image.height}`, unownedColorStrategy = "BUY" /* BUY */) {
+  }), image, width = image.width, brightness = 0, strategy = "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */, opacity = 50, drawTransparentPixels = false, drawColorsInOrder = true, colors = [], disabledColors = new Set, lock = false, disabled = false, name = `${image.width}x${image.height}`, unownedColorStrategy = "BUY" /* BUY */, wplaceId) {
     super();
     this.bot = bot;
     this.position = position;
@@ -1406,6 +1472,7 @@ class BotImage extends Base2 {
     this.disabled = disabled;
     this.name = name;
     this.unownedColorStrategy = unownedColorStrategy;
+    this.wplaceId = wplaceId;
     this.bot.images.push(this);
     this.resolution = image.width / image.height;
     this.imageData = this.image.getContext("2d").getImageData(0, 0, image.width, image.height).data;
@@ -1510,7 +1577,11 @@ class BotImage extends Base2 {
       save(this.bot);
     });
     this.bot.fixSpaceInInput(this.$name);
-    this.$canvas.addEventListener("mousedown", this.moveStart.bind(this));
+    if (this.wplaceId) {
+      addClass(this.element, "managed");
+      this.$name.readOnly = true;
+    } else
+      this.$canvas.addEventListener("mousedown", this.moveStart.bind(this));
     this.$wrapper.addEventListener("wheel", (event) => document.querySelector(".maplibregl-canvas").dispatchEvent(new WheelEvent("wheel", {
       bubbles: true,
       deltaX: event.deltaX,
@@ -1521,8 +1592,9 @@ class BotImage extends Base2 {
     })));
     this.registerEvent(document, "mouseup", this.moveStop.bind(this));
     this.registerEvent(document, "mousemove", this.move.bind(this));
-    for (const $resize of querySelectorAll(this.element, ".resize"))
-      $resize.addEventListener("mousedown", this.resizeStart.bind(this));
+    if (!this.wplaceId)
+      for (const $resize of querySelectorAll(this.element, ".resize"))
+        $resize.addEventListener("mousedown", this.resizeStart.bind(this));
   }
   async toJSON() {
     const blob = await this.image.convertToBlob({
@@ -1552,8 +1624,31 @@ class BotImage extends Base2 {
       disabled: this.disabled,
       name: this.name,
       unownedColorStrategy: this.unownedColorStrategy,
+      wplaceId: this.wplaceId,
       version: SAVE_VERSION
     };
+  }
+  async applySiteTemplate(data) {
+    const [globalX, globalY] = data.position;
+    const disabled = data.disabled;
+    const moved = this.position.globalX !== globalX || this.position.globalY !== globalY || this.width !== data.width;
+    const redraw = moved || this.disabled !== disabled;
+    if (!redraw && this.name === (data.name ?? this.name) && this.lock === (data.lock ?? this.lock))
+      return false;
+    this.position.globalX = globalX;
+    this.position.globalY = globalY;
+    this.width = data.width;
+    this.disabled = disabled;
+    if (data.name !== undefined)
+      this.name = data.name;
+    if (data.lock !== undefined)
+      this.lock = data.lock;
+    if (redraw) {
+      this.position.updateAnchor();
+      await this.updatePixels();
+    } else
+      this.updateUI();
+    return true;
   }
   async updatePixels(progress) {
     const progress2 = progress ?? ((p) => {
@@ -1834,415 +1929,427 @@ class BotImage extends Base2 {
 }
 
 // src/style.css
-var style_default = `/* stylelint-disable declaration-no-important */
-/* stylelint-disable plugin/no-low-performance-animation-properties */
-/* stylelint-disable no-descending-specificity */
-@import 'https://fonts.googleapis.com/css2?family=Tiny5&display=swap';
-
-:root {
-  --text-invert: #fff;
-  --resize: 8px;
-  --text: #422e2c;
-  --background: #fbe3cb;
-  --background-hover: #f0d1b3;
-  --background-disabled: #a37648;
-  --main: #66bbb4;
-  --main-hover: #48a19a;
-}
-
-/**
- * Hide our injected favorite location markers.
- * \`of S\` is required: plain :nth-child() counts among ALL siblings of the
- * canvas container, where the markers are never the first children.
- */
-:nth-child(
-  -n
-    + FAKE_FAVORITE_LOCATIONS
-    of
-    .text-yellow-400.cursor-pointer.z-10.maplibregl-marker.maplibregl-marker-anchor-center
-) {
-  display: none !important;
-}
-
-/** LOCAL STYLES */
-
-/** Widget */
-.widget {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 1000;
-  display: flex;
-  flex-direction: column;
-  width: 256px;
-  height: 100dvh;
-  border-right: var(--text) 2px solid;
-  background-color: var(--background);
-  color: var(--text);
-  transition: transform 0.5s;
-  transform: translateX(-100%);
-}
-
-.widget * {
-  font-family: 'Tiny5', sans-serif;
-}
-
-.widget .title {
-  display: block;
-  width: 100%;
-  border: none;
-  border-bottom: var(--text) 2px solid;
-  background-color: var(--main);
-  color: var(--text);
-  font-size: 32px;
-  text-align: center;
-}
-
-.widget.open .open-button div {
-  transform: rotate(180deg);
-}
-
-.widget.open {
-  box-shadow: 8px 0 16px -8px var(--main);
-  transform: translateX(0);
-}
-
-.widget .open-button div {
-  transition: transform 0.5s;
-}
-
-.widget .open-button {
-  position: absolute;
-  top: calc(50% - 24px);
-  right: -24px;
-  width: 24px;
-  height: 48px;
-  border: var(--text) 2px solid;
-  border-left: none;
-  background-color: var(--background);
-  color: var(--text);
-  cursor: pointer;
-}
-
-.widget .images {
-  display: block;
-}
-
-.widget .images .item {
-  display: grid;
-  grid-template-areas:
-    'canvas name name name'
-    'canvas toggle up down';
-  grid-template-columns: 48px 1fr auto auto; /* canvas fixed, name flexible, up/down auto */
-  gap: 4px;
-  width: 100%;
-  height: 64px;
-  margin-bottom: 4px;
-}
-
-.widget .images .item canvas {
-  grid-area: canvas;
-  margin-right: 4px;
-  cursor: pointer;
-}
-
-.widget .images .item .name {
-  display: block;
-  grid-area: name;
-}
-
-.widget .images .item .toggle {
-  display: flex;
-  grid-area: toggle;
-  gap: 4px;
-  justify-content: center;
-  align-items: center;
-  font-size: 18px;
-}
-
-.widget .images .item .up {
-  grid-area: up;
-  font-weight: bolder;
-  font-size: 24px;
-  line-height: 100%;
-}
-
-.widget .images .item .down {
-  grid-area: down;
-  font-weight: bolder;
-  font-size: 24px;
-  line-height: 100%;
-}
-
-/** Image */
-.image {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 9;
-}
-
-.image * {
-  font-family: 'Tiny5', sans-serif;
-}
-
-.image canvas {
-  image-rendering: pixelated;
-  width: 100%;
-  box-shadow: inset var(--text) 0 0 0 2px;
-  cursor: all-scroll;
-}
-
-dialog.form {
-  width: clamp(256px, 60vh, 512px);
-  height: 60vh;
-  margin: auto;
-  border: var(--text) 2px solid;
-  background-color: var(--background);
-  color: var(--text);
-}
-
-dialog.form::backdrop {
-  background: rgb(0 0 0 / 70%);
-}
-
-dialog.export-dialog {
-  margin: auto;
-  border: var(--text) 2px solid;
-  background-color: var(--background);
-  color: var(--text);
-}
-
-dialog.export-dialog::backdrop {
-  background: rgb(0 0 0 / 70%);
-}
-
-.export-dialog[open] {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-}
-
-.export-dialog button {
-  padding: 8px 12px;
-  border: var(--text) 2px solid;
-  background-color: var(--background);
-  color: var(--text);
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.export-dialog button:hover {
-  background-color: var(--background-hover);
-}
-
-/* Settings */
-.form {
-  flex-grow: 1;
-  overflow-y: auto;
-}
-
-.form > * {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  overflow: hidden;
-  width: calc(100% - 8px);
-  margin: 4px;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.form button,
-.form input,
-.form select,
-.form textarea,
-.form label:has(input[type='checkbox']) {
-  padding: 0 8px;
-  border: var(--text) 2px solid;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.form input[type='range'] {
-  appearance: none;
-  width: 100%;
-  height: 32px;
-  background: linear-gradient(
-    to right,
-    var(--main) var(--val),
-    var(--background-disabled) var(--val)
-  );
-  cursor: ew-resize;
-}
-
-.form input[type='range']::-moz-range-thumb {
-  width: 0;
-  height: 0;
-  opacity: 0;
-}
-
-.form button:hover,
-.form input:hover {
-  background-color: var(--background-hover);
-}
-
-.form button:disabled,
-.form input:disabled {
-  background-color: var(--background-disabled);
-  cursor: no-drop;
-}
-
-.form label input:not([type='checkbox']) {
-  width: inherit;
-}
-
-.form .progress {
-  position: relative;
-  width: 100%;
-  margin: 0;
-}
-
-.form .progress div {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  background-color: var(--main);
-  transform-origin: left;
-}
-
-.form .progress span {
-  z-index: 0;
-}
-
-.form .colors {
-  position: relative;
-  display: block;
-  width: 100%;
-  margin: 0;
-}
-
-.form .colors > button {
-  position: absolute;
-  left: 0;
-  z-index: 1;
-  display: block;
-  width: 100%;
-  height: 20px;
-  border: none;
-  font-size: 16px;
-  cursor: ns-resize;
-  transition: 0.5s top ease;
-}
-
-.form .colors > button.dark {
-  color: var(--text-invert);
-}
-
-.form .colors > button:hover {
-  filter: brightness(0.6);
-}
-
-.form .colors > button * {
-  float: left;
-}
-
-.form .colors > button .percent {
-  float: right;
-}
-
-.form .colors > button.dragging {
-  z-index: 100;
-}
-
-.form .colors > button > button {
-  height: 100%;
-}
-
-/* Topbar */
-.topbar {
-  position: absolute;
-  top: -24px;
-  left: 0;
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-width: min-content;
-  min-width: 256px;
-  border: var(--text) 2px solid;
-  background-color: var(--main);
-  color: var(--text-invert);
-  cursor: all-scroll;
-}
-
-.topbar .name {
-  width: 100%;
-  height: 100%;
-  padding: 0 4px;
-}
-
-.topbar button {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  width: 24px;
-  height: 24px;
-}
-
-.topbar button:hover {
-  background-color: var(--main-hover);
-}
-
-/* Resize */
-.resize {
-  position: absolute;
-  width: calc(100% - var(--resize) - var(--resize));
-  height: calc(100% - var(--resize) - var(--resize));
-}
-
-.resize.n {
-  top: 0;
-  left: var(--resize);
-  height: var(--resize);
-  cursor: n-resize;
-}
-
-.resize.e {
-  top: var(--resize);
-  right: 0;
-  width: var(--resize);
-  cursor: e-resize;
-}
-
-.resize.s {
-  bottom: 0;
-  left: var(--resize);
-  height: var(--resize);
-  cursor: s-resize;
-}
-
-.resize.w {
-  top: var(--resize);
-  left: 0;
-  width: var(--resize);
-  cursor: w-resize;
-}
-
-/* Utility */
-.p {
-  padding: 0 8px;
-}
-
-.hidden {
-  display: none;
-}
-
-.no-pointer-events {
-  height: 1px;
-  pointer-events: none;
-}
+var style_default = `/* stylelint-disable declaration-no-important */\r
+/* stylelint-disable plugin/no-low-performance-animation-properties */\r
+/* stylelint-disable no-descending-specificity */\r
+@import 'https://fonts.googleapis.com/css2?family=Tiny5&display=swap';\r
+\r
+:root {\r
+  --text-invert: #fff;\r
+  --resize: 8px;\r
+  --text: #422e2c;\r
+  --background: #fbe3cb;\r
+  --background-hover: #f0d1b3;\r
+  --background-disabled: #a37648;\r
+  --main: #66bbb4;\r
+  --main-hover: #48a19a;\r
+}\r
+\r
+/**\r
+ * Hide our injected favorite location markers.\r
+ * \`of S\` is required: plain :nth-child() counts among ALL siblings of the\r
+ * canvas container, where the markers are never the first children.\r
+ */\r
+:nth-child(\r
+  -n\r
+    + FAKE_FAVORITE_LOCATIONS\r
+    of\r
+    .text-yellow-400.cursor-pointer.z-10.maplibregl-marker.maplibregl-marker-anchor-center\r
+) {\r
+  display: none !important;\r
+}\r
+\r
+/** LOCAL STYLES */\r
+\r
+/** Widget */\r
+.widget {\r
+  position: fixed;\r
+  top: 0;\r
+  left: 0;\r
+  z-index: 1000;\r
+  display: flex;\r
+  flex-direction: column;\r
+  width: 256px;\r
+  height: 100dvh;\r
+  border-right: var(--text) 2px solid;\r
+  background-color: var(--background);\r
+  color: var(--text);\r
+  transition: transform 0.5s;\r
+  transform: translateX(-100%);\r
+}\r
+\r
+.widget * {\r
+  font-family: 'Tiny5', sans-serif;\r
+}\r
+\r
+.widget .title {\r
+  display: block;\r
+  width: 100%;\r
+  border: none;\r
+  border-bottom: var(--text) 2px solid;\r
+  background-color: var(--main);\r
+  color: var(--text);\r
+  font-size: 32px;\r
+  text-align: center;\r
+}\r
+\r
+.widget.open .open-button div {\r
+  transform: rotate(180deg);\r
+}\r
+\r
+.widget.open {\r
+  box-shadow: 8px 0 16px -8px var(--main);\r
+  transform: translateX(0);\r
+}\r
+\r
+.widget .open-button div {\r
+  transition: transform 0.5s;\r
+}\r
+\r
+.widget .open-button {\r
+  position: absolute;\r
+  top: calc(50% - 24px);\r
+  right: -24px;\r
+  width: 24px;\r
+  height: 48px;\r
+  border: var(--text) 2px solid;\r
+  border-left: none;\r
+  background-color: var(--background);\r
+  color: var(--text);\r
+  cursor: pointer;\r
+}\r
+\r
+.widget .images {\r
+  display: block;\r
+}\r
+\r
+.widget .images .item {\r
+  display: grid;\r
+  grid-template-areas:\r
+    'canvas name name name'\r
+    'canvas toggle up down';\r
+  grid-template-columns: 48px 1fr auto auto; /* canvas fixed, name flexible, up/down auto */\r
+  gap: 4px;\r
+  width: 100%;\r
+  height: 64px;\r
+  margin-bottom: 4px;\r
+}\r
+\r
+.widget .images .item canvas {\r
+  grid-area: canvas;\r
+  margin-right: 4px;\r
+  cursor: pointer;\r
+}\r
+\r
+.widget .images .item .name {\r
+  display: block;\r
+  grid-area: name;\r
+}\r
+\r
+.widget .images .item .toggle {\r
+  display: flex;\r
+  grid-area: toggle;\r
+  gap: 4px;\r
+  justify-content: center;\r
+  align-items: center;\r
+  font-size: 18px;\r
+}\r
+\r
+.widget .images .item .up {\r
+  grid-area: up;\r
+  font-weight: bolder;\r
+  font-size: 24px;\r
+  line-height: 100%;\r
+}\r
+\r
+.widget .images .item .down {\r
+  grid-area: down;\r
+  font-weight: bolder;\r
+  font-size: 24px;\r
+  line-height: 100%;\r
+}\r
+\r
+/** Image */\r
+.image {\r
+  position: fixed;\r
+  top: 0;\r
+  left: 0;\r
+  z-index: 9;\r
+}\r
+\r
+.image * {\r
+  font-family: 'Tiny5', sans-serif;\r
+}\r
+\r
+.image canvas {\r
+  image-rendering: pixelated;\r
+  width: 100%;\r
+  box-shadow: inset var(--text) 0 0 0 2px;\r
+  cursor: all-scroll;\r
+}\r
+\r
+dialog.form {\r
+  width: clamp(256px, 60vh, 512px);\r
+  height: 60vh;\r
+  margin: auto;\r
+  border: var(--text) 2px solid;\r
+  background-color: var(--background);\r
+  color: var(--text);\r
+}\r
+\r
+dialog.form::backdrop {\r
+  background: rgb(0 0 0 / 70%);\r
+}\r
+\r
+dialog.export-dialog {\r
+  margin: auto;\r
+  border: var(--text) 2px solid;\r
+  background-color: var(--background);\r
+  color: var(--text);\r
+}\r
+\r
+dialog.export-dialog::backdrop {\r
+  background: rgb(0 0 0 / 70%);\r
+}\r
+\r
+.export-dialog[open] {\r
+  display: flex;\r
+  flex-direction: column;\r
+  gap: 8px;\r
+  padding: 12px;\r
+}\r
+\r
+.export-dialog button {\r
+  padding: 8px 12px;\r
+  border: var(--text) 2px solid;\r
+  background-color: var(--background);\r
+  color: var(--text);\r
+  cursor: pointer;\r
+  transition: background-color 0.2s;\r
+}\r
+\r
+.export-dialog button:hover {\r
+  background-color: var(--background-hover);\r
+}\r
+\r
+/* Settings */\r
+.form {\r
+  flex-grow: 1;\r
+  overflow-y: auto;\r
+}\r
+\r
+.form > * {\r
+  display: flex;\r
+  justify-content: center;\r
+  align-items: center;\r
+  overflow: hidden;\r
+  width: calc(100% - 8px);\r
+  margin: 4px;\r
+  text-align: center;\r
+  text-overflow: ellipsis;\r
+  white-space: nowrap;\r
+}\r
+\r
+.form button,\r
+.form input,\r
+.form select,\r
+.form textarea,\r
+.form label:has(input[type='checkbox']) {\r
+  padding: 0 8px;\r
+  border: var(--text) 2px solid;\r
+  cursor: pointer;\r
+  transition: background-color 0.2s;\r
+}\r
+\r
+.form input[type='range'] {\r
+  appearance: none;\r
+  width: 100%;\r
+  height: 32px;\r
+  background: linear-gradient(\r
+    to right,\r
+    var(--main) var(--val),\r
+    var(--background-disabled) var(--val)\r
+  );\r
+  cursor: ew-resize;\r
+}\r
+\r
+.form input[type='range']::-moz-range-thumb {\r
+  width: 0;\r
+  height: 0;\r
+  opacity: 0;\r
+}\r
+\r
+.form button:hover,\r
+.form input:hover {\r
+  background-color: var(--background-hover);\r
+}\r
+\r
+.form button:disabled,\r
+.form input:disabled {\r
+  background-color: var(--background-disabled);\r
+  cursor: no-drop;\r
+}\r
+\r
+.form label input:not([type='checkbox']) {\r
+  width: inherit;\r
+}\r
+\r
+.form .progress {\r
+  position: relative;\r
+  width: 100%;\r
+  margin: 0;\r
+}\r
+\r
+.form .progress div {\r
+  position: absolute;\r
+  width: 100%;\r
+  height: 100%;\r
+  background-color: var(--main);\r
+  transform-origin: left;\r
+}\r
+\r
+.form .progress span {\r
+  z-index: 0;\r
+}\r
+\r
+.form .colors {\r
+  position: relative;\r
+  display: block;\r
+  width: 100%;\r
+  margin: 0;\r
+}\r
+\r
+.form .colors > button {\r
+  position: absolute;\r
+  left: 0;\r
+  z-index: 1;\r
+  display: block;\r
+  width: 100%;\r
+  height: 20px;\r
+  border: none;\r
+  font-size: 16px;\r
+  cursor: ns-resize;\r
+  transition: 0.5s top ease;\r
+}\r
+\r
+.form .colors > button.dark {\r
+  color: var(--text-invert);\r
+}\r
+\r
+.form .colors > button:hover {\r
+  filter: brightness(0.6);\r
+}\r
+\r
+.form .colors > button * {\r
+  float: left;\r
+}\r
+\r
+.form .colors > button .percent {\r
+  float: right;\r
+}\r
+\r
+.form .colors > button.dragging {\r
+  z-index: 100;\r
+}\r
+\r
+.form .colors > button > button {\r
+  height: 100%;\r
+}\r
+\r
+/* Topbar */\r
+.topbar {\r
+  position: absolute;\r
+  top: -24px;\r
+  left: 0;\r
+  display: flex;\r
+  align-items: center;\r
+  width: 100%;\r
+  min-width: min-content;\r
+  min-width: 256px;\r
+  border: var(--text) 2px solid;\r
+  background-color: var(--main);\r
+  color: var(--text-invert);\r
+  cursor: all-scroll;\r
+}\r
+\r
+.topbar .name {\r
+  width: 100%;\r
+  height: 100%;\r
+  padding: 0 4px;\r
+}\r
+\r
+.topbar button {\r
+  display: flex;\r
+  justify-content: center;\r
+  align-items: center;\r
+  width: 24px;\r
+  height: 24px;\r
+}\r
+\r
+.topbar button:hover {\r
+  background-color: var(--main-hover);\r
+}\r
+\r
+/* Resize */\r
+.resize {\r
+  position: absolute;\r
+  width: calc(100% - var(--resize) - var(--resize));\r
+  height: calc(100% - var(--resize) - var(--resize));\r
+}\r
+\r
+.resize.n {\r
+  top: 0;\r
+  left: var(--resize);\r
+  height: var(--resize);\r
+  cursor: n-resize;\r
+}\r
+\r
+.resize.e {\r
+  top: var(--resize);\r
+  right: 0;\r
+  width: var(--resize);\r
+  cursor: e-resize;\r
+}\r
+\r
+.resize.s {\r
+  bottom: 0;\r
+  left: var(--resize);\r
+  height: var(--resize);\r
+  cursor: s-resize;\r
+}\r
+\r
+.resize.w {\r
+  top: var(--resize);\r
+  left: 0;\r
+  width: var(--resize);\r
+  cursor: w-resize;\r
+}\r
+\r
+/* Utility */\r
+.p {\r
+  padding: 0 8px;\r
+}\r
+\r
+.hidden {\r
+  display: none;\r
+}\r
+\r
+.no-pointer-events {\r
+  height: 1px;\r
+  pointer-events: none;\r
+}\r
+\r
+/** Site-managed templates: the site owns placement, so hide our editors */\r
+.image.managed .resize,\r
+.image.managed .lock,\r
+.image.managed .delete,\r
+.image.managed .reset-size {\r
+  display: none;\r
+}\r
+\r
+.image.managed canvas {\r
+  cursor: default;\r
+}\r
 `;
 
 // src/errors.ts
@@ -2434,6 +2541,10 @@ class Widget extends Base2 {
         save(this.bot);
       });
       const $enabled = querySelector($image, ".enabled");
+      if (image.wplaceId) {
+        $name.readOnly = true;
+        $enabled.disabled = true;
+      }
       $enabled.addEventListener("change", async () => {
         image.disabled = !$enabled.checked;
         await image.updatePixels();
@@ -2489,6 +2600,7 @@ class WPlaceBot {
   strategy = "SEQUENTIAL" /* SEQUENTIAL */;
   images = [];
   autoDrawInterval;
+  drawing = false;
   widget = new Widget(this);
   markerPixelPositionResolvers = [];
   lastColor;
@@ -2509,6 +2621,13 @@ class WPlaceBot {
       this.title = save2.title;
     } else {
       this.title = "WPlace-bot";
+    }
+    const known = new Set(save2?.images.map((image) => image.wplaceId));
+    const newTemplates = readSiteTemplates().filter((template) => !known.has(template.id));
+    for (let index = 0;index < newTemplates.length; index++) {
+      const [x, y] = newTemplates[index].data.position;
+      addFavoriteLocation({ x: x - 1000, y: y - 1000 });
+      addFavoriteLocation({ x: x + 1000, y: y + 1000 });
     }
     this.registerFetchInterceptor();
     const style = document.createElement("style");
@@ -2547,6 +2666,8 @@ class WPlaceBot {
           });
         }
       }
+      await this.importSiteTemplates(newTemplates);
+      this.watchSiteTemplates();
       this.widget.setDisabled("draw", false);
       this.widget.setDisabled("auto-draw", false);
       this.widget.setDisabled("add-image", false);
@@ -2587,6 +2708,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       const firstImage = this.images[0];
       if (!firstImage)
         return;
+      this.drawing = true;
       globalThis.addEventListener("mousemove", prevent, true);
       $canvas.addEventListener("wheel", prevent, true);
       await this.widget.run("Loading", (progress2) => Promise.all([
@@ -2734,6 +2856,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         image.tasks = image.tasks.subarray(value * 2);
       this.widget.update();
     }, () => {
+      this.drawing = false;
       globalThis.removeEventListener("mousemove", prevent, true);
       $canvas.removeEventListener("wheel", prevent, true);
       this.widget.setDisabled("draw", false);
@@ -2775,6 +2898,59 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       strategy: this.strategy,
       title: this.title
     };
+  }
+  async importSiteTemplates(templates) {
+    if (templates.length === 0)
+      return;
+    await this.widget.run("Importing templates", async (progress) => {
+      const batchSize = 1 / templates.length;
+      for (let index = 0;index < templates.length; index++) {
+        const template = templates[index];
+        const url = await readSiteTemplateImage(template.id);
+        if (!url)
+          continue;
+        await BotImage.fromJSON(this, { ...template.data, opacity: 0, url, wplaceId: template.id }, (p) => {
+          progress(index * batchSize + p * batchSize);
+        });
+      }
+    });
+    await save(this, true);
+  }
+  watchSiteTemplates() {
+    let snapshot = localStorage.getItem(OVERLAYS_KEY);
+    setInterval(() => {
+      if (this.drawing)
+        return;
+      const current = localStorage.getItem(OVERLAYS_KEY);
+      if (current === snapshot)
+        return;
+      snapshot = current;
+      this.syncSiteTemplates();
+    }, 1000);
+  }
+  async syncSiteTemplates() {
+    const templates = new Map(readSiteTemplates().map((template) => [template.id, template.data]));
+    let changed = false;
+    for (let index = this.images.length - 1;index >= 0; index--) {
+      const image = this.images[index];
+      if (!image.wplaceId)
+        continue;
+      const data = templates.get(image.wplaceId);
+      if (data) {
+        templates.delete(image.wplaceId);
+        if (await image.applySiteTemplate(data))
+          changed = true;
+      } else {
+        image.destroy();
+        changed = true;
+      }
+    }
+    if (templates.size !== 0)
+      this.widget.status = `ℹ️ ${templates.size} new template(s), reload to import`;
+    if (changed) {
+      this.widget.update();
+      await save(this, true);
+    }
   }
   async updateColorsData() {
     await this.openColors();

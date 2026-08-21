@@ -37,35 +37,124 @@ export type WplaceFile = {
   visible: boolean
 }
 
+/** The parts of a template the site owns, in our units */
+export type SiteTemplateData = {
+  position: [number, number]
+  width: number
+  opacity?: number
+  lock?: boolean
+  disabled: boolean
+  name?: string
+}
+
+/** Everything a template says about itself except the image */
+function placement(template: Partial<WplaceFile>): SiteTemplateData {
+  const bounds = template.bounds
+  if (
+    !bounds ||
+    [bounds.north, bounds.south, bounds.west, bounds.east].some(
+      (x) => typeof x !== 'number' || !Number.isFinite(x),
+    )
+  )
+    throw new Error('Template has no usable bounds')
+  const globalX = Math.round(longitudeToWorld(bounds.west))
+  const globalY = Math.round(latitudeToWorld(bounds.north))
+  return {
+    position: [globalX, globalY] as [number, number],
+    width: Math.max(1, Math.round(longitudeToWorld(bounds.east)) - globalX),
+    opacity:
+      typeof template.opacity === 'number'
+        ? Math.round(template.opacity * 100)
+        : undefined,
+    lock: template.locked,
+    disabled: template.visible === false,
+    name: template.name,
+  }
+}
+
 /**
  * Convert a parsed `.wplace` file into arguments for `BotImage.fromJSON`.
  * The bounds carry the on-map size, so the template keeps its scale.
  */
 export function fromWplaceFile(raw: unknown) {
   const file = raw as Partial<WplaceFile>
-  const bounds = file.bounds
-  if (
-    typeof file.image?.dataUrl !== 'string' ||
-    !bounds ||
-    [bounds.north, bounds.south, bounds.west, bounds.east].some(
-      (x) => typeof x !== 'number' || !Number.isFinite(x),
-    )
-  )
+  if (typeof file.image?.dataUrl !== 'string')
     throw new Error('Not a valid .wplace template')
-  const globalX = Math.round(longitudeToWorld(bounds.west))
-  const globalY = Math.round(latitudeToWorld(bounds.north))
-  return {
-    url: file.image.dataUrl,
-    position: [globalX, globalY] as [number, number],
-    width: Math.max(1, Math.round(longitudeToWorld(bounds.east)) - globalX),
-    opacity:
-      typeof file.opacity === 'number'
-        ? Math.round(file.opacity * 100)
-        : undefined,
-    lock: file.locked,
-    disabled: file.visible === false,
-    name: file.name,
+  return { ...placement(file), url: file.image.dataUrl }
+}
+
+// === wplace's own template manager ===
+// Metadata lives in localStorage, images live in an IndexedDB blob store keyed
+// by the same id. Read-only: their Google Drive backup tracks content
+// signatures, so writing into it behind their back risks their data.
+
+export const OVERLAYS_KEY = 'template-overlays'
+const TEMPLATES_DB = 'wplace-templates'
+const TEMPLATES_STORE = 'images'
+
+/** Templates currently placed in wplace's own template manager */
+export function readSiteTemplates() {
+  let overlays: Partial<WplaceFile>[]
+  try {
+    overlays = JSON.parse(
+      localStorage.getItem(OVERLAYS_KEY) ?? '[]',
+    ) as Partial<WplaceFile>[]
+  } catch {
+    return []
   }
+  if (!Array.isArray(overlays)) return []
+  const templates: { id: string; data: SiteTemplateData }[] = []
+  for (let index = 0; index < overlays.length; index++) {
+    const overlay = overlays[index]
+    if (typeof overlay?.id !== 'string') continue
+    try {
+      templates.push({ id: overlay.id, data: placement(overlay) })
+    } catch {
+      // A template we can't place is one we can't import
+    }
+  }
+  return templates
+}
+
+/** Read one template image out of wplace's store as a data URL */
+export async function readSiteTemplateImage(id: string) {
+  const db = await new Promise<IDBDatabase | undefined>((resolve) => {
+    const request = indexedDB.open(TEMPLATES_DB)
+    request.onsuccess = () => {
+      resolve(request.result)
+    }
+    request.onerror = () => {
+      resolve(undefined)
+    }
+  })
+  if (!db?.objectStoreNames.contains(TEMPLATES_STORE)) {
+    db?.close()
+    return
+  }
+  const blob = await new Promise<Blob | undefined>((resolve) => {
+    const request = db
+      .transaction(TEMPLATES_STORE, 'readonly')
+      .objectStore(TEMPLATES_STORE)
+      .get(id)
+    request.onsuccess = () => {
+      resolve(request.result as Blob | undefined)
+    }
+    request.onerror = () => {
+      resolve(undefined)
+    }
+  })
+  db.close()
+  if (!blob) return
+  return new Promise<string | undefined>((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      resolve(reader.result as string)
+    }
+    reader.onerror = () => {
+      resolve(undefined)
+    }
+    reader.readAsDataURL(blob)
+  })
 }
 
 /**
