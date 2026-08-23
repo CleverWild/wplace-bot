@@ -71,39 +71,6 @@ var SESSION_ID = Math.floor(Math.random() * 4503599627370496).toString(16).padSt
 function wait(time) {
   return new Promise((r) => setTimeout(r, time));
 }
-class SimpleEventSource {
-  handlers = new Map;
-  send(name, data) {
-    return this.handlers.get(name)?.map((handler) => handler(data)) ?? [];
-  }
-  on(name, handler) {
-    let handlers = this.handlers.get(name);
-    if (!handlers) {
-      handlers = [];
-      this.handlers.set(name, handlers);
-    }
-    handlers.push(handler);
-    return () => {
-      removeFromArray(handlers, handler);
-      if (handlers.length === 0)
-        this.handlers.delete(name);
-    };
-  }
-  off(name, handler) {
-    const handlers = this.handlers.get(name);
-    if (!handlers)
-      return;
-    removeFromArray(handlers, handler);
-    if (handlers.length === 0)
-      this.handlers.delete(name);
-  }
-  get source() {
-    return {
-      on: this.on.bind(this),
-      off: this.off.bind(this)
-    };
-  }
-}
 function promisifyEventSource(target, resolveEvents, rejectEvents = ["error"], subName = "addEventListener") {
   return new Promise((resolve, reject) => {
     for (let index = 0;index < resolveEvents.length; index++)
@@ -114,46 +81,6 @@ function promisifyEventSource(target, resolveEvents, rejectEvents = ["error"], s
 }
 // node_modules/@softsky/utils/dist/signals.js
 var effectsMap = new WeakMap;
-// node_modules/@softsky/utils/dist/time.js
-class SpeedCalculator {
-  size;
-  historyTime;
-  sum = 0;
-  history = [];
-  statsCached;
-  startTime = Date.now();
-  constructor(size, historyTime = 15000) {
-    this.size = size;
-    this.historyTime = historyTime;
-  }
-  push(chunk) {
-    if (chunk < 0)
-      throw new Error("Negative chunk size");
-    const { time, historyTime } = this.getTime();
-    this.history.push({ time, chunk });
-    if (this.history[0] && this.history[0].time + historyTime < time)
-      this.history.shift();
-    this.sum += chunk;
-    delete this.statsCached;
-  }
-  get stats() {
-    if (!this.statsCached) {
-      const speed = this.history.reduce((sum, entry) => sum + entry.chunk, 0) / this.getTime().historyTime * 1000;
-      this.statsCached = this.size === undefined ? { speed } : {
-        speed,
-        percent: this.sum / this.size,
-        eta: ~~((this.size - this.sum) / speed) * 1000
-      };
-    }
-    return this.statsCached;
-  }
-  getTime() {
-    const time = Date.now();
-    const timeSinceStart = time - this.startTime;
-    const historyTime = Math.min(timeSinceStart, this.historyTime);
-    return { time, historyTime };
-  }
-}
 // src/obfuscator.ts
 var SID = Array.from({ length: 16 }, () => (10 + Math.random() * 26 | 0).toString(36)).join("");
 function obfucsateHTML(html) {
@@ -2301,7 +2228,7 @@ class Widget extends Base2 {
     }
     const doneTasks = maxTasks - totalTasks;
     const percent = formatPercent(doneTasks / maxTasks);
-    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, totalTasks)}h`;
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, totalTasks)}`;
     this.$progressLine.style.transform = `scaleX(${percent})`;
     this.$images.innerHTML = "";
     for (let index = 0;index < this.bot.images.length; index++) {
