@@ -157,7 +157,7 @@ export class Widget extends Base {
     }
     const doneTasks = maxTasks - totalTasks
     const percent = formatPercent(doneTasks / maxTasks)
-    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, totalTasks)}h`
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, totalTasks)}`
     this.$progressLine.style.transform = `scaleX(${percent})`
 
     // Images
