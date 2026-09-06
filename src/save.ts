@@ -117,6 +117,7 @@ export function migrateImage(
     return {
       url,
       width,
+      height: undefined,
       brightness,
       position: old.position,
       strategy: ImageStrategy.SPIRAL_TO_CENTER,
@@ -129,6 +130,7 @@ export function migrateImage(
       disabled: false,
       name: `Unnamed image`,
       unownedColorStrategy: UnownedColorStrategy.BUY,
+      wplaceId: undefined,
       version: 3,
     }
   }

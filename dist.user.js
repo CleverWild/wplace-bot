@@ -71,6 +71,39 @@ var SESSION_ID = Math.floor(Math.random() * 4503599627370496).toString(16).padSt
 function wait(time) {
   return new Promise((r) => setTimeout(r, time));
 }
+class SimpleEventSource {
+  handlers = new Map;
+  send(name, data) {
+    return this.handlers.get(name)?.map((handler) => handler(data)) ?? [];
+  }
+  on(name, handler) {
+    let handlers = this.handlers.get(name);
+    if (!handlers) {
+      handlers = [];
+      this.handlers.set(name, handlers);
+    }
+    handlers.push(handler);
+    return () => {
+      removeFromArray(handlers, handler);
+      if (handlers.length === 0)
+        this.handlers.delete(name);
+    };
+  }
+  off(name, handler) {
+    const handlers = this.handlers.get(name);
+    if (!handlers)
+      return;
+    removeFromArray(handlers, handler);
+    if (handlers.length === 0)
+      this.handlers.delete(name);
+  }
+  get source() {
+    return {
+      on: this.on.bind(this),
+      off: this.off.bind(this)
+    };
+  }
+}
 function promisifyEventSource(target, resolveEvents, rejectEvents = ["error"], subName = "addEventListener") {
   return new Promise((resolve, reject) => {
     for (let index = 0;index < resolveEvents.length; index++)
@@ -81,6 +114,46 @@ function promisifyEventSource(target, resolveEvents, rejectEvents = ["error"], s
 }
 // node_modules/@softsky/utils/dist/signals.js
 var effectsMap = new WeakMap;
+// node_modules/@softsky/utils/dist/time.js
+class SpeedCalculator {
+  size;
+  historyTime;
+  sum = 0;
+  history = [];
+  statsCached;
+  startTime = Date.now();
+  constructor(size, historyTime = 15000) {
+    this.size = size;
+    this.historyTime = historyTime;
+  }
+  push(chunk) {
+    if (chunk < 0)
+      throw new Error("Negative chunk size");
+    const { time, historyTime } = this.getTime();
+    this.history.push({ time, chunk });
+    if (this.history[0] && this.history[0].time + historyTime < time)
+      this.history.shift();
+    this.sum += chunk;
+    delete this.statsCached;
+  }
+  get stats() {
+    if (!this.statsCached) {
+      const speed = this.history.reduce((sum, entry) => sum + entry.chunk, 0) / this.getTime().historyTime * 1000;
+      this.statsCached = this.size === undefined ? { speed } : {
+        speed,
+        percent: this.sum / this.size,
+        eta: ~~((this.size - this.sum) / speed) * 1000
+      };
+    }
+    return this.statsCached;
+  }
+  getTime() {
+    const time = Date.now();
+    const timeSinceStart = time - this.startTime;
+    const historyTime = Math.min(timeSinceStart, this.historyTime);
+    return { time, historyTime };
+  }
+}
 // src/obfuscator.ts
 var SID = Array.from({ length: 16 }, () => (10 + Math.random() * 26 | 0).toString(36)).join("");
 function obfucsateHTML(html) {
@@ -321,6 +394,7 @@ var image_default = `<div class="topbar">
       </select>
     </label>
     <button class="reset-size">Reset size [<span></span>px]</button>
+    <button class="reset-aspect">Reset aspect ratio</button>
     <label>
       <input type="checkbox" class="draw-transparent" />&nbsp;Erase transparent pixels
     </label>
@@ -328,6 +402,11 @@ var image_default = `<div class="topbar">
       <input type="checkbox" class="draw-colors-in-order" />&nbsp;Draw colors in order
     </label>
     <div class="colors"></div>
+  </dialog>
+  <dialog class="export-dialog">
+    <button class="export-wbot">Save .wbot (restorable)</button>
+    <button class="export-wplace">Export .wplace (wplace template)</button>
+    <button class="export-image">Export image (.webp)</button>
   </dialog>
 `;
 
@@ -429,6 +508,7 @@ function migrateImage(old) {
     return {
       url,
       width,
+      height: undefined,
       brightness,
       position: old.position,
       strategy: "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */,
@@ -441,6 +521,7 @@ function migrateImage(old) {
       disabled: false,
       name: `Unnamed image`,
       unownedColorStrategy: "BUY" /* BUY */,
+      wplaceId: undefined,
       version: 3
     };
   }
@@ -701,12 +782,18 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
   var FAVORITE_LOCATIONS_POSITIONS = [];
   var FAVORITE_LOCATIONS = [];
   var lastId = Date.now();
+  function worldToLatitude(y) {
+    return (2 * Math.atan(Math.exp(-(y / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI))) - Math.PI / 2) * 180 / Math.PI;
+  }
+  function worldToLongitude(x) {
+    return (x / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI) * 180 / Math.PI;
+  }
   function addFavoriteLocation(position) {
     FAVORITE_LOCATIONS_POSITIONS.push(position);
     FAVORITE_LOCATIONS.push({
       id: lastId++,
-      latitude: (2 * Math.atan(Math.exp(-(position.y / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI))) - Math.PI / 2) * 180 / Math.PI,
-      longitude: (position.x / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI) * 180 / Math.PI,
+      latitude: worldToLatitude(position.y),
+      longitude: worldToLongitude(position.x),
       name: "WBOT_FAVORITE"
     });
   }
@@ -1082,12 +1169,24 @@ var WORLD_PIXEL_SIZE = WORLD_TILE_SIZE * WORLD_TILES;
 var FAVORITE_LOCATIONS_POSITIONS = [];
 var FAVORITE_LOCATIONS = [];
 var lastId = Date.now();
+function worldToLatitude(y) {
+  return (2 * Math.atan(Math.exp(-(y / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI))) - Math.PI / 2) * 180 / Math.PI;
+}
+function worldToLongitude(x) {
+  return (x / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI) * 180 / Math.PI;
+}
+function latitudeToWorld(latitude) {
+  return (-Math.log(Math.tan(Math.PI / 4 + latitude * Math.PI / 180 / 2)) + Math.PI) / (2 * Math.PI) * WORLD_PIXEL_SIZE;
+}
+function longitudeToWorld(longitude) {
+  return (longitude * Math.PI / 180 + Math.PI) / (2 * Math.PI) * WORLD_PIXEL_SIZE;
+}
 function addFavoriteLocation(position) {
   FAVORITE_LOCATIONS_POSITIONS.push(position);
   FAVORITE_LOCATIONS.push({
     id: lastId++,
-    latitude: (2 * Math.atan(Math.exp(-(position.y / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI))) - Math.PI / 2) * 180 / Math.PI,
-    longitude: (position.x / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI) * 180 / Math.PI,
+    latitude: worldToLatitude(position.y),
+    longitude: worldToLongitude(position.x),
     name: "WBOT_FAVORITE"
   });
 }
@@ -1160,7 +1259,8 @@ class WorldPosition {
     this.anchor2Index = 1;
     let min1 = Infinity;
     let min2 = Infinity;
-    for (let index = 0;index < FAVORITE_LOCATIONS_POSITIONS.length; index++) {
+    const anchors = Math.min(FAVORITE_LOCATIONS_POSITIONS.length, this.bot.$stars.length);
+    for (let index = 0;index < anchors; index++) {
       const { x, y } = FAVORITE_LOCATIONS_POSITIONS[index];
       if (x < this.globalX && y < this.globalY) {
         const delta = this.globalX - x + (this.globalY - y);
@@ -1200,6 +1300,121 @@ class WorldPosition {
   }
 }
 
+// src/wplace-file.ts
+function placement(template) {
+  const bounds = template.bounds;
+  if (!bounds || [bounds.north, bounds.south, bounds.west, bounds.east].some((x) => typeof x !== "number" || !Number.isFinite(x)))
+    throw new Error("Template has no usable bounds");
+  const globalX = Math.round(longitudeToWorld(bounds.west));
+  const globalY = Math.round(latitudeToWorld(bounds.north));
+  return {
+    position: [globalX, globalY],
+    width: Math.max(1, Math.round(longitudeToWorld(bounds.east)) - globalX),
+    height: Math.max(1, Math.round(latitudeToWorld(bounds.south)) - globalY),
+    opacity: typeof template.opacity === "number" ? Math.round(template.opacity * 100) : undefined,
+    lock: template.locked,
+    disabled: template.visible === false,
+    name: template.name
+  };
+}
+function fromWplaceFile(raw) {
+  const file = raw;
+  if (typeof file.image?.dataUrl !== "string")
+    throw new Error("Not a valid .wplace template");
+  return { ...placement(file), url: file.image.dataUrl };
+}
+var OVERLAYS_KEY = "template-overlays";
+var TEMPLATES_DB = "wplace-templates";
+var TEMPLATES_STORE = "images";
+function readSiteTemplates() {
+  let overlays;
+  try {
+    overlays = JSON.parse(localStorage.getItem(OVERLAYS_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(overlays))
+    return [];
+  const templates = [];
+  for (let index = 0;index < overlays.length; index++) {
+    const overlay = overlays[index];
+    if (typeof overlay?.id !== "string")
+      continue;
+    try {
+      templates.push({ id: overlay.id, data: placement(overlay) });
+    } catch {}
+  }
+  return templates;
+}
+async function readSiteTemplateImage(id) {
+  const db = await new Promise((resolve) => {
+    const request = indexedDB.open(TEMPLATES_DB);
+    request.onupgradeneeded = () => {
+      request.transaction?.abort();
+    };
+    request.onsuccess = () => {
+      resolve(request.result);
+    };
+    request.onerror = () => {
+      resolve(undefined);
+    };
+  });
+  if (!db?.objectStoreNames.contains(TEMPLATES_STORE)) {
+    db?.close();
+    return;
+  }
+  const blob = await new Promise((resolve) => {
+    const request = db.transaction(TEMPLATES_STORE, "readonly").objectStore(TEMPLATES_STORE).get(id);
+    request.onsuccess = () => {
+      resolve(request.result);
+    };
+    request.onerror = () => {
+      resolve(undefined);
+    };
+  });
+  db.close();
+  if (!blob)
+    return;
+  return new Promise((resolve) => {
+    const reader = new FileReader;
+    reader.onload = () => {
+      resolve(reader.result);
+    };
+    reader.onerror = () => {
+      resolve(undefined);
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+function toWplaceFile(image, order = 0) {
+  const { globalX, globalY } = image.position;
+  return {
+    id: crypto.randomUUID(),
+    schemaVersion: "1",
+    name: image.name,
+    opacity: image.opacity / 100,
+    image: {
+      dataUrl: image.$canvas.toDataURL("image/png"),
+      width: image.width,
+      height: image.height
+    },
+    bounds: {
+      north: worldToLatitude(globalY),
+      south: worldToLatitude(globalY + image.height),
+      west: worldToLongitude(globalX),
+      east: worldToLongitude(globalX + image.width)
+    },
+    colorMetric: "ciede2000",
+    dithering: false,
+    useLegacyColors: false,
+    colorPaletteMode: "all",
+    order,
+    locked: image.lock,
+    hasPlaced: false,
+    visible: !image.disabled
+  };
+}
+
 // src/image.ts
 function etaText(bot, remaining) {
   const charges = Math.floor(bot.me?.charges.count ?? 0);
@@ -1213,6 +1428,7 @@ class BotImage extends Base2 {
   position;
   image;
   width;
+  heightOverride;
   brightness;
   strategy;
   opacity;
@@ -1224,6 +1440,7 @@ class BotImage extends Base2 {
   disabled;
   name;
   unownedColorStrategy;
+  wplaceId;
   static async fromJSON(bot, data, progress) {
     const image = new Image;
     image.src = data.url.startsWith("http") ? await fetch(data.url, { cache: "no-store" }).then((x) => x.blob()).then((x) => URL.createObjectURL(x)) : data.url;
@@ -1232,7 +1449,7 @@ class BotImage extends Base2 {
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(image, 0, 0);
-    const botImage = new BotImage(bot, data.position ? WorldPosition.fromJSON(bot, data.position) : undefined, canvas, data.width, data.brightness, data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, new Set(data.disabledColors), data.lock, data.disabled, data.name, data.unownedColorStrategy);
+    const botImage = new BotImage(bot, data.position ? WorldPosition.fromJSON(bot, data.position) : undefined, canvas, data.width, data.height, data.brightness, data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, new Set(data.disabledColors), data.lock, data.disabled, data.name, data.unownedColorStrategy, data.wplaceId);
     await botImage.updatePixels(progress);
     return botImage;
   }
@@ -1240,10 +1457,10 @@ class BotImage extends Base2 {
   resolution;
   colorsStat = new Map;
   get height() {
-    return this.width / this.resolution | 0;
+    return this.heightOverride ?? this.width / this.resolution | 0;
   }
   set height(value) {
-    this.width = value * this.resolution | 0;
+    this.heightOverride = value;
   }
   tasks = new Uint32Array(0);
   moveInfo;
@@ -1262,9 +1479,11 @@ class BotImage extends Base2 {
   $progressLine;
   $progressText;
   $resetSize;
+  $resetAspect;
   $resetSizeSpan;
   $settings;
   $strategy;
+  $exportDialog;
   $topbar;
   $wrapper;
   $name;
@@ -1275,12 +1494,13 @@ class BotImage extends Base2 {
   constructor(bot, position = WorldPosition.fromScreenPosition(bot, {
     x: 256,
     y: 32
-  }), image, width = image.width, brightness = 0, strategy = "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */, opacity = 50, drawTransparentPixels = false, drawColorsInOrder = true, colors = [], disabledColors = new Set, lock = false, disabled = false, name = `${image.width}x${image.height}`, unownedColorStrategy = "BUY" /* BUY */) {
+  }), image, width = image.width, heightOverride, brightness = 0, strategy = "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */, opacity = 50, drawTransparentPixels = false, drawColorsInOrder = true, colors = [], disabledColors = new Set, lock = false, disabled = false, name = `${image.width}x${image.height}`, unownedColorStrategy = "BUY" /* BUY */, wplaceId) {
     super();
     this.bot = bot;
     this.position = position;
     this.image = image;
     this.width = width;
+    this.heightOverride = heightOverride;
     this.brightness = brightness;
     this.strategy = strategy;
     this.opacity = opacity;
@@ -1292,6 +1512,7 @@ class BotImage extends Base2 {
     this.disabled = disabled;
     this.name = name;
     this.unownedColorStrategy = unownedColorStrategy;
+    this.wplaceId = wplaceId;
     this.bot.images.push(this);
     this.resolution = image.width / image.height;
     this.imageData = this.image.getContext("2d").getImageData(0, 0, image.width, image.height).data;
@@ -1310,8 +1531,10 @@ class BotImage extends Base2 {
       $progressLine: ".progress div",
       $progressText: ".progress span",
       $resetSize: ".reset-size",
+      $resetAspect: ".reset-aspect",
       $settings: ".form",
       $strategy: ".strategy",
+      $exportDialog: ".export-dialog",
       $topbar: ".topbar",
       $wrapper: ".wrapper",
       $name: ".name",
@@ -1357,6 +1580,12 @@ class BotImage extends Base2 {
     });
     this.$resetSize.addEventListener("click", async () => {
       this.width = this.image.width;
+      this.heightOverride = undefined;
+      await this.updatePixels();
+      await save(this.bot);
+    });
+    this.$resetAspect.addEventListener("click", async () => {
+      this.heightOverride = undefined;
       await this.updatePixels();
       await save(this.bot);
     });
@@ -1375,7 +1604,19 @@ class BotImage extends Base2 {
       save(this.bot);
     });
     this.$delete.addEventListener("click", this.destroy.bind(this));
-    this.$export.addEventListener("click", this.export.bind(this));
+    this.$export.addEventListener("click", () => {
+      this.$exportDialog.showModal();
+    });
+    this.$exportDialog.addEventListener("click", (event) => {
+      if (event.target === this.$exportDialog)
+        this.$exportDialog.close();
+    });
+    for (const [selector, format] of [
+      [".export-wbot", "wbot"],
+      [".export-wplace", "wplace"],
+      [".export-image", "image"]
+    ])
+      querySelector(this.$exportDialog, selector).addEventListener("click", () => this.exportAs(format));
     this.$name.addEventListener("change", () => {
       this.name = this.$name.value;
       this.updateUI();
@@ -1383,7 +1624,11 @@ class BotImage extends Base2 {
       save(this.bot);
     });
     this.bot.fixSpaceInInput(this.$name);
-    this.$canvas.addEventListener("mousedown", this.moveStart.bind(this));
+    if (this.wplaceId) {
+      addClass(this.element, "managed");
+      this.$name.readOnly = true;
+    } else
+      this.$canvas.addEventListener("mousedown", this.moveStart.bind(this));
     this.$wrapper.addEventListener("wheel", (event) => document.querySelector(".maplibregl-canvas").dispatchEvent(new WheelEvent("wheel", {
       bubbles: true,
       deltaX: event.deltaX,
@@ -1394,8 +1639,9 @@ class BotImage extends Base2 {
     })));
     this.registerEvent(document, "mouseup", this.moveStop.bind(this));
     this.registerEvent(document, "mousemove", this.move.bind(this));
-    for (const $resize of querySelectorAll(this.element, ".resize"))
-      $resize.addEventListener("mousedown", this.resizeStart.bind(this));
+    if (!this.wplaceId)
+      for (const $resize of querySelectorAll(this.element, ".resize"))
+        $resize.addEventListener("mousedown", this.resizeStart.bind(this));
   }
   async toJSON() {
     const blob = await this.image.convertToBlob({
@@ -1413,6 +1659,7 @@ class BotImage extends Base2 {
     return {
       url,
       width: this.width,
+      height: this.heightOverride,
       brightness: this.brightness,
       position: this.position.toJSON(),
       strategy: this.strategy,
@@ -1425,8 +1672,32 @@ class BotImage extends Base2 {
       disabled: this.disabled,
       name: this.name,
       unownedColorStrategy: this.unownedColorStrategy,
+      wplaceId: this.wplaceId,
       version: SAVE_VERSION
     };
+  }
+  async applySiteTemplate(data) {
+    const [globalX, globalY] = data.position;
+    const disabled = data.disabled;
+    const moved = this.position.globalX !== globalX || this.position.globalY !== globalY || this.width !== data.width || this.height !== data.height;
+    const redraw = moved || this.disabled !== disabled;
+    if (!redraw && this.name === (data.name ?? this.name) && this.lock === (data.lock ?? this.lock))
+      return false;
+    this.position.globalX = globalX;
+    this.position.globalY = globalY;
+    this.width = data.width;
+    this.height = data.height;
+    this.disabled = disabled;
+    if (data.name !== undefined)
+      this.name = data.name;
+    if (data.lock !== undefined)
+      this.lock = data.lock;
+    if (redraw) {
+      this.position.updateAnchor();
+      await this.updatePixels();
+    } else
+      this.updateUI();
+    return true;
   }
   async updatePixels(progress) {
     const progress2 = progress ?? ((p) => {
@@ -1480,10 +1751,11 @@ class BotImage extends Base2 {
     const { x, y } = this.position.toScreenPosition();
     this.element.style.transform = `translate(${x}px, ${y}px)`;
     this.element.style.width = `${this.position.pixelSize * this.width}px`;
+    this.$canvas.style.height = `${this.position.pixelSize * this.height}px`;
     this.$wrapper.style.opacity = this.disabled ? "0.4" : "1";
     this.$canvas.style.opacity = `${this.opacity}%`;
     removeClass(this.element, "hidden");
-    this.$resetSizeSpan.textContent = this.width.toString();
+    this.$resetSizeSpan.textContent = `${this.width}x${this.height}`;
     this.$brightness.valueAsNumber = this.brightness;
     this.$strategy.value = this.strategy;
     this.$opacity.valueAsNumber = this.opacity;
@@ -1685,19 +1957,30 @@ class BotImage extends Base2 {
       this.moveInfo.globalX = this.position.globalX;
     }
   }
-  async export() {
+  async exportAs(format) {
+    this.$exportDialog.close();
     const a = document.createElement("a");
     document.body.append(a);
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(await this.toJSON())], {
-      type: "application/json"
-    }));
-    a.download = `${this.name}.wbot`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    a.href = this.$canvas.toDataURL("image/webp", 1);
-    a.download = `${this.name}.webp`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const download = (href, name) => {
+      a.href = href;
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(href);
+    };
+    const json = (data) => URL.createObjectURL(new Blob([JSON.stringify(data)], { type: "application/json" }));
+    switch (format) {
+      case "wplace": {
+        download(json(toWplaceFile(this, this.bot.images.indexOf(this))), `${this.name}.wplace`);
+        break;
+      }
+      case "image": {
+        download(this.$canvas.toDataURL("image/webp", 1), `${this.name}.webp`);
+        break;
+      }
+      default: {
+        download(json(await this.toJSON()), `${this.name}.wbot`);
+      }
+    }
     a.remove();
   }
 }
@@ -1873,6 +2156,37 @@ dialog.form {
 
 dialog.form::backdrop {
   background: rgb(0 0 0 / 70%);
+}
+
+dialog.export-dialog {
+  margin: auto;
+  border: var(--text) 2px solid;
+  background-color: var(--background);
+  color: var(--text);
+}
+
+dialog.export-dialog::backdrop {
+  background: rgb(0 0 0 / 70%);
+}
+
+.export-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.export-dialog button {
+  padding: 8px 12px;
+  border: var(--text) 2px solid;
+  background-color: var(--background);
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.export-dialog button:hover {
+  background-color: var(--background-hover);
 }
 
 /* Settings */
@@ -2081,6 +2395,19 @@ dialog.form::backdrop {
   height: 1px;
   pointer-events: none;
 }
+
+/** Site-managed templates: the site owns placement, so hide our editors */
+.image.managed .resize,
+.image.managed .lock,
+.image.managed .delete,
+.image.managed .reset-size,
+.image.managed .reset-aspect {
+  display: none;
+}
+
+.image.managed canvas {
+  cursor: default;
+}
 `;
 
 // src/errors.ts
@@ -2192,13 +2519,21 @@ class Widget extends Base2 {
       await this.bot.updateColorsData();
       const input = document.createElement("input");
       input.type = "file";
-      input.accept = "image/*,.wbot";
+      input.accept = "image/*,.wbot,.wplace";
       input.click();
       await promisifyEventSource(input, ["change"], ["cancel", "error"]);
       const file = input.files?.[0];
       if (!file)
         throw new NoImageError(this.bot);
-      if (file.name.endsWith(".wbot")) {
+      if (file.name.endsWith(".wplace")) {
+        let data;
+        try {
+          data = fromWplaceFile(JSON.parse(await file.text()));
+        } catch {
+          throw new WPlaceBotError("❌ Broken .wplace template", this.bot);
+        }
+        await BotImage.fromJSON(this.bot, data);
+      } else if (file.name.endsWith(".wbot")) {
         await BotImage.fromJSON(this.bot, migrateImage(JSON.parse(await file.text())));
       } else {
         const reader = new FileReader;
@@ -2264,6 +2599,10 @@ class Widget extends Base2 {
         save(this.bot);
       });
       const $enabled = querySelector($image, ".enabled");
+      if (image.wplaceId) {
+        $name.readOnly = true;
+        $enabled.disabled = true;
+      }
       $enabled.addEventListener("change", async () => {
         image.disabled = !$enabled.checked;
         await image.updatePixels();
@@ -2319,6 +2658,7 @@ class WPlaceBot {
   strategy = "SEQUENTIAL" /* SEQUENTIAL */;
   images = [];
   autoDrawInterval;
+  drawing = false;
   widget = new Widget(this);
   markerPixelPositionResolvers = [];
   lastColor;
@@ -2340,6 +2680,13 @@ class WPlaceBot {
     } else {
       this.title = "WPlace-bot";
     }
+    const known = new Set(save2?.images.map((image) => image.wplaceId));
+    const newTemplates = readSiteTemplates().filter((template) => !known.has(template.id));
+    for (let index = 0;index < newTemplates.length; index++) {
+      const [x, y] = newTemplates[index].data.position;
+      addFavoriteLocation({ x: x - 1000, y: y - 1000 });
+      addFavoriteLocation({ x: x + 1000, y: y + 1000 });
+    }
     this.registerFetchInterceptor();
     const style = document.createElement("style");
     style.textContent = obfuscateCSS(style_default.replace("FAKE_FAVORITE_LOCATIONS", FAVORITE_LOCATIONS.length.toString()));
@@ -2352,11 +2699,13 @@ class WPlaceBot {
       const $canvasContainer = await this.waitForElement(".maplibregl-canvas-container");
       progress(0.03);
       new MutationObserver((mutations) => {
-        for (let index = 0;index < mutations.length; index++)
-          if (mutations[index].removedNodes.length !== 0) {
+        for (let index = 0;index < mutations.length; index++) {
+          const mutation = mutations[index];
+          if (mutation.removedNodes.length !== 0 || mutation.addedNodes.length !== 0) {
             this.updateStars();
             break;
           }
+        }
         for (let index = 0;index < this.images.length; index++)
           this.images[index].updateUI();
       }).observe($canvasContainer, {
@@ -2377,6 +2726,9 @@ class WPlaceBot {
           });
         }
       }
+      await this.importSiteTemplates(newTemplates);
+      await this.syncSiteTemplates();
+      this.watchSiteTemplates();
       this.widget.setDisabled("draw", false);
       this.widget.setDisabled("auto-draw", false);
       this.widget.setDisabled("add-image", false);
@@ -2417,6 +2769,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       const firstImage = this.images[0];
       if (!firstImage)
         return;
+      this.drawing = true;
       globalThis.addEventListener("mousemove", prevent, true);
       $canvas.addEventListener("wheel", prevent, true);
       await this.widget.run("Loading", (progress2) => Promise.all([
@@ -2564,6 +2917,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         image.tasks = image.tasks.subarray(value * 2);
       this.widget.update();
     }, () => {
+      this.drawing = false;
       globalThis.removeEventListener("mousemove", prevent, true);
       $canvas.removeEventListener("wheel", prevent, true);
       this.widget.setDisabled("draw", false);
@@ -2605,6 +2959,71 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       strategy: this.strategy,
       title: this.title
     };
+  }
+  async importSiteTemplates(templates) {
+    if (templates.length === 0)
+      return;
+    await this.widget.run("Importing templates", async (progress) => {
+      const batchSize = 1 / templates.length;
+      for (let index = 0;index < templates.length; index++) {
+        const template = templates[index];
+        const url = await readSiteTemplateImage(template.id);
+        if (!url)
+          continue;
+        await BotImage.fromJSON(this, { ...template.data, opacity: 0, url, wplaceId: template.id }, (p) => {
+          progress(index * batchSize + p * batchSize);
+        });
+      }
+    });
+    await save(this, true);
+  }
+  watchSiteTemplates() {
+    let snapshot = localStorage.getItem(OVERLAYS_KEY);
+    let syncing = false;
+    setInterval(() => {
+      if (this.drawing || syncing)
+        return;
+      const current = localStorage.getItem(OVERLAYS_KEY);
+      if (current === snapshot)
+        return;
+      snapshot = current;
+      syncing = true;
+      this.syncSiteTemplates().finally(() => {
+        syncing = false;
+      });
+    }, 1000);
+  }
+  async syncSiteTemplates() {
+    const templates = new Map(readSiteTemplates().map((template) => [template.id, template.data]));
+    let changed = false;
+    for (let index = this.images.length - 1;index >= 0; index--) {
+      const image = this.images[index];
+      if (!image.wplaceId)
+        continue;
+      const data = templates.get(image.wplaceId);
+      if (data) {
+        templates.delete(image.wplaceId);
+        if (await image.applySiteTemplate(data))
+          changed = true;
+      } else {
+        image.destroy();
+        changed = true;
+      }
+    }
+    if (templates.size !== 0) {
+      const fresh = [...templates].map(([id, data]) => ({ id, data }));
+      for (let index = 0;index < fresh.length; index++) {
+        const [x, y] = fresh[index].data.position;
+        addFavoriteLocation({ x: x - 1000, y: y - 1000 });
+        addFavoriteLocation({ x: x + 1000, y: y + 1000 });
+      }
+      await this.importSiteTemplates(fresh);
+      changed = true;
+    }
+    if (changed) {
+      this.widget.update();
+      await save(this, true);
+    }
   }
   async updateColorsData() {
     await this.openColors();
@@ -2705,9 +3124,13 @@ Developer will try to fix your save. Be vary that github issues are public, and 
     });
   }
   updateStars() {
+    const previous = this.$stars.length;
     this.$stars = [
       ...document.querySelectorAll(".text-yellow-400.cursor-pointer.z-10.maplibregl-marker.maplibregl-marker-anchor-center")
     ].slice(0, FAVORITE_LOCATIONS.length);
+    if (this.$stars.length !== previous)
+      for (let index = 0;index < this.images.length; index++)
+        this.images[index].position.updateAnchor();
   }
   async zoomIn(zoom, canvas = document.querySelector(".maplibregl-canvas")) {
     const position = this.images[0].position;

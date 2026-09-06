@@ -17,6 +17,7 @@ import { migrateImage, save } from './save'
 import { formatPercent } from './utils'
 // @ts-ignore
 import html from './widget.html' with { type: 'text' }
+import { fromWplaceFile } from './wplace-file'
 
 export enum BotStrategy {
   ALL = 'ALL',
@@ -111,12 +112,20 @@ export class Widget extends Base {
         await this.bot.updateColorsData()
         const input = document.createElement('input')
         input.type = 'file'
-        input.accept = 'image/*,.wbot'
+        input.accept = 'image/*,.wbot,.wplace'
         input.click()
         await promisifyEventSource(input, ['change'], ['cancel', 'error'])
         const file = input.files?.[0]
         if (!file) throw new NoImageError(this.bot)
-        if (file.name.endsWith('.wbot')) {
+        if (file.name.endsWith('.wplace')) {
+          let data
+          try {
+            data = fromWplaceFile(JSON.parse(await file.text()))
+          } catch {
+            throw new WPlaceBotError('❌ Broken .wplace template', this.bot)
+          }
+          await BotImage.fromJSON(this.bot, data)
+        } else if (file.name.endsWith('.wbot')) {
           await BotImage.fromJSON(
             this.bot,
             migrateImage(
@@ -200,6 +209,11 @@ export class Widget extends Base {
         void save(this.bot)
       })
       const $enabled = querySelector<HTMLInputElement>($image, '.enabled')!
+      // Name and visibility belong to the site for imported templates
+      if (image.wplaceId) {
+        $name.readOnly = true
+        $enabled.disabled = true
+      }
       $enabled.addEventListener('change', async () => {
         image.disabled = !$enabled.checked
         await image.updatePixels()

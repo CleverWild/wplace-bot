@@ -1,4 +1,4 @@
-import { type Me, WPlaceBot } from './bot'
+import { type Me, type WPlaceBot } from './bot'
 
 export type Position = {
   x: number
@@ -13,23 +13,42 @@ export const WORLD_PIXEL_SIZE = WORLD_TILE_SIZE * WORLD_TILES
 export const FAVORITE_LOCATIONS_POSITIONS: Position[] = []
 export const FAVORITE_LOCATIONS: Me['favoriteLocations'] = []
 let lastId = Date.now()
+/** Web mercator, the projection wplace's map uses */
+export function worldToLatitude(y: number) {
+  return (
+    ((2 *
+      Math.atan(Math.exp(-((y / WORLD_PIXEL_SIZE) * (2 * Math.PI) - Math.PI))) -
+      Math.PI / 2) *
+      180) /
+    Math.PI
+  )
+}
+
+export function worldToLongitude(x: number) {
+  return (((x / WORLD_PIXEL_SIZE) * (2 * Math.PI) - Math.PI) * 180) / Math.PI
+}
+
+export function latitudeToWorld(latitude: number) {
+  return (
+    ((-Math.log(Math.tan(Math.PI / 4 + (latitude * Math.PI) / 180 / 2)) +
+      Math.PI) /
+      (2 * Math.PI)) *
+    WORLD_PIXEL_SIZE
+  )
+}
+
+export function longitudeToWorld(longitude: number) {
+  return (
+    (((longitude * Math.PI) / 180 + Math.PI) / (2 * Math.PI)) * WORLD_PIXEL_SIZE
+  )
+}
+
 export function addFavoriteLocation(position: Position) {
   FAVORITE_LOCATIONS_POSITIONS.push(position)
   FAVORITE_LOCATIONS.push({
     id: lastId++,
-    latitude:
-      ((2 *
-        Math.atan(
-          Math.exp(
-            -((position.y / WORLD_PIXEL_SIZE) * (2 * Math.PI) - Math.PI),
-          ),
-        ) -
-        Math.PI / 2) *
-        180) /
-      Math.PI,
-    longitude:
-      (((position.x / WORLD_PIXEL_SIZE) * (2 * Math.PI) - Math.PI) * 180) /
-      Math.PI,
+    latitude: worldToLatitude(position.y),
+    longitude: worldToLongitude(position.x),
     name: 'WBOT_FAVORITE',
   })
 }
@@ -42,17 +61,6 @@ addFavoriteLocation({
   x: ((WORLD_PIXEL_SIZE / 3) * 2) | 0,
   y: ((WORLD_PIXEL_SIZE / 3) * 2) | 0,
 })
-
-// function latLonToWplace(lat: number, lon: number) {
-//   return {
-//     x: (((lon * Math.PI) / 180 + Math.PI) / (2 * Math.PI)) * WORLD_PIXEL_SIZE,
-//     y:
-//       ((-Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 180 / 2)) +
-//         Math.PI) /
-//         (2 * Math.PI)) *
-//       WORLD_PIXEL_SIZE,
-//   }
-// }
 
 export function extractScreenPositionFromStar($star: HTMLDivElement) {
   const [x, y] = $star.style.transform
@@ -155,7 +163,13 @@ export class WorldPosition {
     this.anchor2Index = 1
     let min1 = Infinity
     let min2 = Infinity
-    for (let index = 0; index < FAVORITE_LOCATIONS_POSITIONS.length; index++) {
+    // Anchors added after load have no star on the map yet, and reading one
+    // would throw. They start counting once /me delivers them.
+    const anchors = Math.min(
+      FAVORITE_LOCATIONS_POSITIONS.length,
+      this.bot.$stars.length,
+    )
+    for (let index = 0; index < anchors; index++) {
       const { x, y } = FAVORITE_LOCATIONS_POSITIONS[index]!
       if (x < this.globalX && y < this.globalY) {
         const delta = this.globalX - x + (this.globalY - y)

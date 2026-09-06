@@ -13,6 +13,7 @@ import {
   addClass,
   containsClass,
   obfucsateHTML,
+  querySelector,
   querySelectorAll,
   removeClass,
   toggleClass,
@@ -21,6 +22,7 @@ import { save, SAVE_VERSION } from './save'
 import { formatPercent } from './utils'
 import { workerPixels } from './worker-client'
 import { WorldPosition } from './world-position'
+import { type SiteTemplateData, toWplaceFile } from './wplace-file'
 
 export type DrawTask = {
   position: WorldPosition
@@ -86,6 +88,7 @@ export class BotImage extends Base {
       data.position ? WorldPosition.fromJSON(bot, data.position) : undefined,
       canvas,
       data.width,
+      data.height,
       data.brightness,
       data.strategy,
       data.opacity,
@@ -97,6 +100,7 @@ export class BotImage extends Base {
       data.disabled,
       data.name,
       data.unownedColorStrategy,
+      data.wplaceId,
     )
     await botImage.updatePixels(progress)
     return botImage
@@ -106,11 +110,16 @@ export class BotImage extends Base {
   public readonly resolution: number
   public colorsStat = new Map<number, PixelColorStat>()
 
+  /**
+   * Drawn height. Unset means "follow the source aspect ratio", so an image
+   * that was never stretched behaves exactly as before. A free-form vertical
+   * resize sets an override, decoupling height from width.
+   */
   public get height() {
-    return (this.width / this.resolution) | 0
+    return this.heightOverride ?? (this.width / this.resolution) | 0
   }
   public set height(value: number) {
-    this.width = (value * this.resolution) | 0
+    this.heightOverride = value
   }
 
   /** Pixels to draw */
@@ -142,9 +151,11 @@ export class BotImage extends Base {
   protected readonly $progressLine!: HTMLDivElement
   protected readonly $progressText!: HTMLSpanElement
   protected readonly $resetSize!: HTMLButtonElement
+  protected readonly $resetAspect!: HTMLButtonElement
   protected readonly $resetSizeSpan!: HTMLSpanElement
   protected readonly $settings!: HTMLDivElement
   protected readonly $strategy!: HTMLSelectElement
+  protected readonly $exportDialog!: HTMLDialogElement
   protected readonly $topbar!: HTMLDivElement
   protected readonly $wrapper!: HTMLDivElement
   protected readonly $name!: HTMLInputElement
@@ -164,6 +175,8 @@ export class BotImage extends Base {
     public readonly image: OffscreenCanvas,
     /** Width of drawn image */
     public width = image.width,
+    /** Independent drawn height. Unset follows the source aspect ratio */
+    public heightOverride?: number,
     /** Brightness of image */
     public brightness = 0,
     /** Order of pixels to draw */
@@ -186,6 +199,12 @@ export class BotImage extends Base {
     public name = `${image.width}x${image.height}`,
     /** What to do with colors that user does not own */
     public unownedColorStrategy = UnownedColorStrategy.BUY,
+    /**
+     * Id of the wplace template this image mirrors.
+     * The site owns everything it covers, so those controls are taken away
+     * from the user and overwritten whenever the template changes.
+     */
+    public readonly wplaceId?: string,
   ) {
     super()
     this.bot.images.push(this)
@@ -210,8 +229,10 @@ export class BotImage extends Base {
       $progressLine: '.progress div',
       $progressText: '.progress span',
       $resetSize: '.reset-size',
+      $resetAspect: '.reset-aspect',
       $settings: '.form',
       $strategy: '.strategy',
+      $exportDialog: '.export-dialog',
       $topbar: '.topbar',
       $wrapper: '.wrapper',
       $name: '.name',
@@ -272,6 +293,14 @@ export class BotImage extends Base {
     // Reset
     this.$resetSize.addEventListener('click', async () => {
       this.width = this.image.width
+      this.heightOverride = undefined
+      await this.updatePixels()
+      await save(this.bot)
+    })
+
+    // Restore the source aspect ratio, keeping the current width
+    this.$resetAspect.addEventListener('click', async () => {
+      this.heightOverride = undefined
       await this.updatePixels()
       await save(this.bot)
     })
@@ -299,7 +328,22 @@ export class BotImage extends Base {
     this.$delete.addEventListener('click', this.destroy.bind(this))
 
     // Export
-    this.$export.addEventListener('click', this.export.bind(this))
+    // Export button opens a small format picker
+    this.$export.addEventListener('click', () => {
+      this.$exportDialog.showModal()
+    })
+    this.$exportDialog.addEventListener('click', (event) => {
+      if (event.target === this.$exportDialog) this.$exportDialog.close()
+    })
+    for (const [selector, format] of [
+      ['.export-wbot', 'wbot'],
+      ['.export-wplace', 'wplace'],
+      ['.export-image', 'image'],
+    ] as const)
+      querySelector<HTMLButtonElement>(
+        this.$exportDialog,
+        selector,
+      )!.addEventListener('click', () => this.exportAs(format))
 
     // Name
     this.$name.addEventListener('change', () => {
@@ -311,8 +355,12 @@ export class BotImage extends Base {
 
     this.bot.fixSpaceInInput(this.$name)
 
-    // Move
-    this.$canvas.addEventListener('mousedown', this.moveStart.bind(this))
+    // Anything the site owns is read-only here, or the next sync would just
+    // undo the edit
+    if (this.wplaceId) {
+      addClass(this.element, 'managed')
+      this.$name.readOnly = true
+    } else this.$canvas.addEventListener('mousedown', this.moveStart.bind(this))
 
     // Forward wheel event to scroll through image
     this.$wrapper.addEventListener('wheel', (event) =>
@@ -333,11 +381,12 @@ export class BotImage extends Base {
     this.registerEvent(document, 'mousemove', this.move.bind(this))
 
     // Resize
-    for (const $resize of querySelectorAll<HTMLDivElement>(
-      this.element,
-      '.resize',
-    ))
-      $resize.addEventListener('mousedown', this.resizeStart.bind(this))
+    if (!this.wplaceId)
+      for (const $resize of querySelectorAll<HTMLDivElement>(
+        this.element,
+        '.resize',
+      ))
+        $resize.addEventListener('mousedown', this.resizeStart.bind(this))
   }
 
   public async toJSON() {
@@ -356,6 +405,7 @@ export class BotImage extends Base {
     return {
       url,
       width: this.width,
+      height: this.heightOverride,
       brightness: this.brightness,
       position: this.position.toJSON(),
       strategy: this.strategy,
@@ -368,8 +418,42 @@ export class BotImage extends Base {
       disabled: this.disabled,
       name: this.name,
       unownedColorStrategy: this.unownedColorStrategy,
+      wplaceId: this.wplaceId,
       version: SAVE_VERSION,
     }
+  }
+
+  /**
+   * Apply the site's version of this template.
+   * Returns whether anything actually changed.
+   */
+  public async applySiteTemplate(data: SiteTemplateData) {
+    const [globalX, globalY] = data.position
+    const disabled = data.disabled
+    const moved =
+      this.position.globalX !== globalX ||
+      this.position.globalY !== globalY ||
+      this.width !== data.width ||
+      this.height !== data.height
+    const redraw = moved || this.disabled !== disabled
+    if (
+      !redraw &&
+      this.name === (data.name ?? this.name) &&
+      this.lock === (data.lock ?? this.lock)
+    )
+      return false
+    this.position.globalX = globalX
+    this.position.globalY = globalY
+    this.width = data.width
+    this.height = data.height
+    this.disabled = disabled
+    if (data.name !== undefined) this.name = data.name
+    if (data.lock !== undefined) this.lock = data.lock
+    if (redraw) {
+      this.position.updateAnchor()
+      await this.updatePixels()
+    } else this.updateUI()
+    return true
   }
 
   /** Calculates everything we need to do. Very expensive task! */
@@ -430,11 +514,14 @@ export class BotImage extends Base {
     const { x, y } = this.position.toScreenPosition()
     this.element.style.transform = `translate(${x}px, ${y}px)`
     this.element.style.width = `${this.position.pixelSize * this.width}px`
+    // Height is free-form, so drive it too; otherwise a vertical resize would
+    // only preview on the next redraw (mouseup) instead of live
+    this.$canvas.style.height = `${this.position.pixelSize * this.height}px`
     this.$wrapper.style.opacity = this.disabled ? '0.4' : '1'
     this.$canvas.style.opacity = `${this.opacity}%`
     removeClass(this.element, 'hidden')
 
-    this.$resetSizeSpan.textContent = this.width.toString()
+    this.$resetSizeSpan.textContent = `${this.width}x${this.height}`
     this.$brightness.valueAsNumber = this.brightness
     this.$strategy.value = this.strategy
     this.$opacity.valueAsNumber = this.opacity
@@ -673,22 +760,37 @@ export class BotImage extends Base {
     }
   }
 
-  /** export image */
-  protected async export() {
+  /** Export the image in the chosen format */
+  protected async exportAs(format: 'wbot' | 'wplace' | 'image') {
+    this.$exportDialog.close()
     const a = document.createElement('a')
     document.body.append(a)
-    a.href = URL.createObjectURL(
-      new Blob([JSON.stringify(await this.toJSON())], {
-        type: 'application/json',
-      }),
-    )
-    a.download = `${this.name}.wbot`
-    a.click()
-    URL.revokeObjectURL(a.href)
-    a.href = this.$canvas.toDataURL('image/webp', 1)
-    a.download = `${this.name}.webp`
-    a.click()
-    URL.revokeObjectURL(a.href)
+    const download = (href: string, name: string) => {
+      a.href = href
+      a.download = name
+      a.click()
+      URL.revokeObjectURL(href)
+    }
+    const json = (data: unknown) =>
+      URL.createObjectURL(
+        new Blob([JSON.stringify(data)], { type: 'application/json' }),
+      )
+    switch (format) {
+      case 'wplace': {
+        download(
+          json(toWplaceFile(this, this.bot.images.indexOf(this))),
+          `${this.name}.wplace`,
+        )
+        break
+      }
+      case 'image': {
+        download(this.$canvas.toDataURL('image/webp', 1), `${this.name}.webp`)
+        break
+      }
+      default: {
+        download(json(await this.toJSON()), `${this.name}.wbot`)
+      }
+    }
     a.remove()
   }
 }

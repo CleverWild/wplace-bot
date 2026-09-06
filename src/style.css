@@ -170,6 +170,37 @@ dialog.form::backdrop {
   background: rgb(0 0 0 / 70%);
 }
 
+dialog.export-dialog {
+  margin: auto;
+  border: var(--text) 2px solid;
+  background-color: var(--background);
+  color: var(--text);
+}
+
+dialog.export-dialog::backdrop {
+  background: rgb(0 0 0 / 70%);
+}
+
+.export-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.export-dialog button {
+  padding: 8px 12px;
+  border: var(--text) 2px solid;
+  background-color: var(--background);
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.export-dialog button:hover {
+  background-color: var(--background-hover);
+}
+
 /* Settings */
 .form {
   flex-grow: 1;
@@ -375,4 +406,17 @@ dialog.form::backdrop {
 .no-pointer-events {
   height: 1px;
   pointer-events: none;
+}
+
+/** Site-managed templates: the site owns placement, so hide our editors */
+.image.managed .resize,
+.image.managed .lock,
+.image.managed .delete,
+.image.managed .reset-size,
+.image.managed .reset-aspect {
+  display: none;
+}
+
+.image.managed canvas {
+  cursor: default;
 }
