@@ -256,6 +256,7 @@ for (let index = 0; index < COLORS_RGB.length; index++)
 
 export function colorToCSS(colorId: number) {
   if (colorId === 0) return 'transparent'
-  const color = COLORS[colorId]!
-  return `oklab(${color[0] * 100}% ${color[1]} ${color[2]})`
+  // Straight from the palette. COLORS holds CIELAB now, and its L* 0..100 and
+  // a/b +-128 mean nothing to CSS's oklab(), which clamps them to primaries
+  return '#' + COLORS_RGB[colorId]!.toString(16).padStart(6, '0')
 }

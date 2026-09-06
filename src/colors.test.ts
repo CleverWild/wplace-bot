@@ -3,6 +3,7 @@ import { expect, test } from 'bun:test'
 import {
   COLORS,
   COLORS_RGB_TRIPLES,
+  colorToCSS,
   deltaCompuphase,
   deltaE2000,
   deltaE94,
@@ -126,4 +127,11 @@ test('defaults to the metric wplace defaults to', () => {
   expect(metricFunction('lab')).toBe(deltaE94)
   expect(metricFunction('ciede2000')).toBe(deltaE2000)
   expect(metricFunction('compuphase')).toBe(deltaCompuphase)
+})
+
+test('renders palette colors as their own sRGB values', () => {
+  expect(colorToCSS(0)).toBe('transparent')
+  expect(colorToCSS(1)).toBe('#000000')
+  expect(colorToCSS(2)).toBe('#3c3c3c')
+  expect(colorToCSS(5)).toBe('#ffffff')
 })

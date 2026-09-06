@@ -298,8 +298,7 @@ for (let index = 0;index < COLORS_RGB.length; index++)
 function colorToCSS(colorId) {
   if (colorId === 0)
     return "transparent";
-  const color = COLORS[colorId];
-  return `oklab(${color[0] * 100}% ${color[1]} ${color[2]})`;
+  return "#" + COLORS_RGB[colorId].toString(16).padStart(6, "0");
 }
 
 // src/image.html
