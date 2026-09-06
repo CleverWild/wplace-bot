@@ -6,13 +6,14 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 
 import { WPlaceBot } from './bot'
-import { BotImage, ImageStrategy, UnownedColorStrategy } from './image'
+import { BotImage, UnownedColorStrategy } from './image'
+import { FillDirection, ImageStrategy, RegionOrder } from './ordering'
 
 const DB_NAME = 'wbot'
 const STORE_NAME = 'saves'
 const KEY_NAME = 'wbot'
 const DB_VERSION = 1
-export const SAVE_VERSION = 4
+export const SAVE_VERSION = 6
 
 const dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
   const request = indexedDB.open(DB_NAME, DB_VERSION)
@@ -143,6 +144,28 @@ export function migrateImage(
       siteDisabled: image.wplaceId ? Boolean(image.disabled) : false,
       version: 4,
     }
+  if (image.version < 5)
+    image = {
+      ...image,
+      floodFill: false,
+      regionOrder: 'NONE',
+      fillDirection: FillDirection.SEED_OUT,
+      outlineFirst: false,
+      version: 5,
+    }
+  // The fill used to be a checkbox beside the order, now the order owns it
+  if (image.version < 6) {
+    const { floodFill, ...rest } = image
+    image = {
+      ...rest,
+      regionOrder: floodFill
+        ? rest.regionOrder === 'NONE'
+          ? RegionOrder.IN_ORDER
+          : rest.regionOrder
+        : RegionOrder.OFF,
+      version: 6,
+    }
+  }
   return image
 }
 

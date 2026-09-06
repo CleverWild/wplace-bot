@@ -18,6 +18,12 @@ import {
   removeClass,
   toggleClass,
 } from './obfuscator'
+import {
+  FillDirection,
+  ImageStrategy,
+  RegionOrder,
+  sortColorsByAmount,
+} from './ordering'
 import { save, SAVE_VERSION } from './save'
 import { formatPercent } from './utils'
 import { workerPixels } from './worker-client'
@@ -39,16 +45,6 @@ export type PixelColorStat = {
   amount: number
   left: number
   realColor: number
-}
-
-export enum ImageStrategy {
-  RANDOM = 'RANDOM',
-  DOWN = 'DOWN',
-  UP = 'UP',
-  LEFT = 'LEFT',
-  RIGHT = 'RIGHT',
-  SPIRAL_FROM_CENTER = 'SPIRAL_FROM_CENTER',
-  SPIRAL_TO_CENTER = 'SPIRAL_TO_CENTER',
 }
 
 export enum UnownedColorStrategy {
@@ -103,6 +99,9 @@ export class BotImage extends Base {
       data.unownedColorStrategy,
       data.wplaceId,
       data.siteDisabled,
+      data.regionOrder,
+      data.fillDirection,
+      data.outlineFirst,
     )
     await botImage.updatePixels(progress)
     return botImage
@@ -169,6 +168,13 @@ export class BotImage extends Base {
   protected readonly $name!: HTMLInputElement
   protected readonly $unownedColorStrategyLabel!: HTMLLabelElement
   protected readonly $unownedColorStrategy!: HTMLSelectElement
+  protected readonly $outlineFirst!: HTMLInputElement
+  protected readonly $regionOrderLabel!: HTMLLabelElement
+  protected readonly $regionOrder!: HTMLSelectElement
+  protected readonly $fillDirectionLabel!: HTMLLabelElement
+  protected readonly $fillDirection!: HTMLSelectElement
+  protected readonly $sortColorsDesc!: HTMLButtonElement
+  protected readonly $sortColorsAsc!: HTMLButtonElement
   protected readonly $openSettings!: HTMLButtonElement
   protected readonly $dialog!: HTMLDialogElement
 
@@ -220,6 +226,12 @@ export class BotImage extends Base {
      * switching a template off here is not undone by the next sync.
      */
     public siteDisabled = false,
+    /** Whether blobs are filled in one at a time, and which one goes first */
+    public regionOrder = RegionOrder.OFF,
+    /** How a single blob is filled in */
+    public fillDirection = FillDirection.SEED_OUT,
+    /** The silhouette before everything it encloses */
+    public outlineFirst = false,
   ) {
     super()
     this.bot.images.push(this)
@@ -253,6 +265,11 @@ export class BotImage extends Base {
       $wrapper: '.wrapper',
       $name: '.name',
       $unownedColorStrategyLabel: '.unowned-color-strategy',
+      $outlineFirst: '.outline-first',
+      $regionOrderLabel: '.region-order',
+      $fillDirectionLabel: '.fill-direction',
+      $sortColorsDesc: '.sort-colors-desc',
+      $sortColorsAsc: '.sort-colors-asc',
       $openSettings: '.open-settings',
       $dialog: 'dialog',
       $canvas: 'canvas',
@@ -262,6 +279,10 @@ export class BotImage extends Base {
       this.$unownedColorStrategyLabel.querySelector<HTMLSelectElement>(
         'select',
       )!
+    this.$regionOrder =
+      this.$regionOrderLabel.querySelector<HTMLSelectElement>('select')!
+    this.$fillDirection =
+      this.$fillDirectionLabel.querySelector<HTMLSelectElement>('select')!
     this.$resetSizeSpan =
       this.$resetSize.querySelector<HTMLSpanElement>('span')!
 
@@ -287,11 +308,43 @@ export class BotImage extends Base {
       await save(this.bot)
     })
 
-    // Strategy
-    this.$strategy.addEventListener('change', () => {
+    // Strategy. Everything here reorders the tasks, so the list is rebuilt
+    this.$strategy.addEventListener('change', async () => {
       this.strategy = this.$strategy.value as ImageStrategy
-      void save(this.bot)
+      await this.updatePixels()
+      await save(this.bot)
     })
+
+    // Region fill and its nested setting
+    this.$regionOrder.addEventListener('change', async () => {
+      this.regionOrder = this.$regionOrder.value as RegionOrder
+      await this.updatePixels()
+      await save(this.bot)
+    })
+    this.$fillDirection.addEventListener('change', async () => {
+      this.fillDirection = this.$fillDirection.value as FillDirection
+      await this.updatePixels()
+      await save(this.bot)
+    })
+
+    // Outline first
+    this.$outlineFirst.addEventListener('click', async () => {
+      this.outlineFirst = this.$outlineFirst.checked
+      await this.updatePixels()
+      await save(this.bot)
+    })
+
+    // Color order shortcuts
+    const sortColors = async (ascending: boolean) => {
+      const amounts = new Map<number, number>()
+      for (const stat of this.colorsStat.values())
+        amounts.set(stat.realColor, stat.amount)
+      this.colors = sortColorsByAmount(this.colors, amounts, ascending)
+      await this.updatePixels()
+      await save(this.bot)
+    }
+    this.$sortColorsDesc.addEventListener('click', () => void sortColors(false))
+    this.$sortColorsAsc.addEventListener('click', () => void sortColors(true))
 
     // Opacity
     this.$opacity.addEventListener('input', () => {
@@ -329,16 +382,17 @@ export class BotImage extends Base {
     })
 
     // drawTransparent
-    this.$drawTransparent.addEventListener('click', () => {
+    this.$drawTransparent.addEventListener('click', async () => {
       this.drawTransparentPixels = this.$drawTransparent.checked
-      void save(this.bot)
+      await this.updatePixels()
+      await save(this.bot)
     })
 
     // drawColorsInOrder
-    this.$drawColorsInOrder.addEventListener('click', () => {
+    this.$drawColorsInOrder.addEventListener('click', async () => {
       this.drawColorsInOrder = this.$drawColorsInOrder.checked
-      this.updateColors()
-      void save(this.bot)
+      await this.updatePixels()
+      await save(this.bot)
     })
 
     // Lock
@@ -444,6 +498,9 @@ export class BotImage extends Base {
       unownedColorStrategy: this.unownedColorStrategy,
       wplaceId: this.wplaceId,
       siteDisabled: this.siteDisabled,
+      regionOrder: this.regionOrder,
+      fillDirection: this.fillDirection,
+      outlineFirst: this.outlineFirst,
       version: SAVE_VERSION,
     }
   }
@@ -506,6 +563,9 @@ export class BotImage extends Base {
         nativeHeight: this.image.height,
         nativeWidth: this.image.width,
         strategy: this.strategy,
+        regionOrder: this.regionOrder,
+        fillDirection: this.fillDirection,
+        outlineFirst: this.outlineFirst,
         unavailableColors: this.bot.unavailableColors,
         unownedColorStrategy: this.unownedColorStrategy,
       },
@@ -555,6 +615,13 @@ export class BotImage extends Base {
     this.$opacity.valueAsNumber = this.opacity
     this.$drawTransparent.checked = this.drawTransparentPixels
     this.$drawColorsInOrder.checked = this.drawColorsInOrder
+    this.$outlineFirst.checked = this.outlineFirst
+    this.$regionOrder.value = this.regionOrder
+    this.$fillDirection.value = this.fillDirection
+    // How a blob is filled means nothing while blobs are not a thing
+    if (this.regionOrder === RegionOrder.OFF)
+      addClass(this.$fillDirectionLabel, 'hidden')
+    else removeClass(this.$fillDirectionLabel, 'hidden')
     this.$name.value = this.name
     const maxTasks = this.width * this.height
     const doneTasks = maxTasks - this.tasks.length / 2
@@ -698,12 +765,11 @@ export class BotImage extends Base {
           () => {
             removeClass($button, 'dragging')
             document.removeEventListener('mousemove', mouseMoveHandler)
-            if (newIndex !== index)
-              this.colors.splice(newIndex, 0, ...this.colors.splice(index, 1))
-            void save(this.bot)
             $button.removeEventListener('mousedown', startDrag)
+            if (newIndex === index) return
+            this.colors.splice(newIndex, 0, ...this.colors.splice(index, 1))
             setTimeout(() => {
-              this.updateColors()
+              void this.updatePixels().then(() => save(this.bot))
             }, 200)
           },
           {

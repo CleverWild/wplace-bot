@@ -408,6 +408,20 @@ dialog.export-dialog::backdrop {
   pointer-events: none;
 }
 
+/* A setting that only means something while its parent is on */
+.form .nested {
+  width: calc(100% - 36px);
+  margin-left: 32px;
+}
+
+.colors-sort {
+  gap: 4px;
+}
+
+.colors-sort button {
+  flex: 1;
+}
+
 /** Site-managed templates: the site owns placement, so hide our editors */
 .image.managed .resize,
 .image.managed .lock,

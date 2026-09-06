@@ -356,6 +356,27 @@ var image_default = `<div class="topbar">
     <label>
       <input type="checkbox" class="draw-colors-in-order" />&nbsp;Draw colors in order
     </label>
+    <label title="The silhouette, meaning whatever touches transparency or the image edge, before everything it encloses">
+      <input type="checkbox" class="outline-first" />&nbsp;Outline first
+    </label>
+    <label class="region-order" title="Finish one blob of a color before starting the next, and which blob goes first">
+      Fill regions:&nbsp;<select>
+        <option value="OFF" selected>Off</option>
+        <option value="IN_ORDER">In drawing order</option>
+        <option value="LARGEST">Largest first</option>
+        <option value="SMALLEST">Smallest first</option>
+      </select>
+    </label>
+    <label class="nested fill-direction" title="How a single blob is filled in">
+      Fill:&nbsp;<select>
+        <option value="SEED_OUT" selected>From seed outward</option>
+        <option value="EDGE_IN">From edge inward</option>
+      </select>
+    </label>
+    <div class="colors-sort">
+      <button class="sort-colors-desc" title="Order colors by pixel count, most first">↓ Most</button>
+      <button class="sort-colors-asc" title="Order colors by pixel count, fewest first">↑ Fewest</button>
+    </div>
     <div class="colors"></div>
   </dialog>
   <dialog class="export-dialog">
@@ -365,12 +386,17 @@ var image_default = `<div class="topbar">
   </dialog>
 `;
 
+// src/ordering.ts
+function sortColorsByAmount(colors, amounts, ascending) {
+  return [...colors].sort((a, b) => ascending ? (amounts.get(a) ?? 0) - (amounts.get(b) ?? 0) : (amounts.get(b) ?? 0) - (amounts.get(a) ?? 0));
+}
+
 // src/save.ts
 var DB_NAME = "wbot";
 var STORE_NAME = "saves";
 var KEY_NAME = "wbot";
 var DB_VERSION = 1;
-var SAVE_VERSION = 4;
+var SAVE_VERSION = 6;
 var dbPromise = new Promise((resolve, reject) => {
   const request = indexedDB.open(DB_NAME, DB_VERSION);
   request.onupgradeneeded = () => {
@@ -487,6 +513,23 @@ function migrateImage(old) {
       siteDisabled: image.wplaceId ? Boolean(image.disabled) : false,
       version: 4
     };
+  if (image.version < 5)
+    image = {
+      ...image,
+      floodFill: false,
+      regionOrder: "NONE",
+      fillDirection: "SEED_OUT" /* SEED_OUT */,
+      outlineFirst: false,
+      version: 5
+    };
+  if (image.version < 6) {
+    const { floodFill, ...rest } = image;
+    image = {
+      ...rest,
+      regionOrder: floodFill ? rest.regionOrder === "NONE" ? "IN_ORDER" /* IN_ORDER */ : rest.regionOrder : "OFF" /* OFF */,
+      version: 6
+    };
+  }
   return image;
 }
 function migrate(old) {
@@ -711,6 +754,266 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
   for (let index = 0;index < COLORS_RGB.length; index++)
     COLORS_RGB_MAP.set(COLORS_RGB[index], index);
 
+  // src/ordering.ts
+  function strategyPosition(strategy, height, width) {
+    const SIZE = width * height;
+    const result = new Uint16Array(SIZE * 2);
+    let index = 0;
+    switch (strategy) {
+      case "DOWN" /* DOWN */: {
+        for (let y = 0;y < height; y++)
+          for (let x = 0;x < width; x++) {
+            result[index] = x;
+            result[index + 1] = y;
+            index += 2;
+          }
+        break;
+      }
+      case "UP" /* UP */: {
+        for (let y = height - 1;y >= 0; y--)
+          for (let x = 0;x < width; x++) {
+            result[index] = x;
+            result[index + 1] = y;
+            index += 2;
+          }
+        break;
+      }
+      case "LEFT" /* LEFT */: {
+        for (let x = 0;x < width; x++)
+          for (let y = 0;y < height; y++) {
+            result[index] = x;
+            result[index + 1] = y;
+            index += 2;
+          }
+        break;
+      }
+      case "RIGHT" /* RIGHT */: {
+        for (let x = width - 1;x >= 0; x--)
+          for (let y = 0;y < height; y++) {
+            result[index] = x;
+            result[index + 1] = y;
+            index += 2;
+          }
+        break;
+      }
+      case "RANDOM" /* RANDOM */: {
+        for (let y = 0;y < height; y++)
+          for (let x = 0;x < width; x++) {
+            result[index] = x;
+            result[index + 1] = y;
+            index += 2;
+          }
+        for (let index2 = SIZE - 1;index2 >= 0; index2--) {
+          const randIndex = Math.floor(Math.random() * (index2 + 1)) * 2;
+          const realIndex = index2 * 2;
+          const temporaryX = result[realIndex];
+          const temporaryY = result[realIndex + 1];
+          result[realIndex] = result[randIndex];
+          result[realIndex + 1] = result[randIndex + 1];
+          result[randIndex] = temporaryX;
+          result[randIndex + 1] = temporaryY;
+        }
+        break;
+      }
+      case "SPIRAL_FROM_CENTER" /* SPIRAL_FROM_CENTER */:
+      case "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */: {
+        const reverse = strategy === "SPIRAL_FROM_CENTER" /* SPIRAL_FROM_CENTER */;
+        let idx = reverse ? SIZE - 1 : 0;
+        const step = reverse ? -1 : 1;
+        let top = 0, bottom = height - 1, left = 0, right = width - 1;
+        while (top <= bottom && left <= right) {
+          for (let x = left;x <= right; x++) {
+            result[idx * 2] = x;
+            result[idx * 2 + 1] = top;
+            idx += step;
+          }
+          top++;
+          for (let y = top;y <= bottom; y++) {
+            result[idx * 2] = right;
+            result[idx * 2 + 1] = y;
+            idx += step;
+          }
+          right--;
+          if (top <= bottom) {
+            for (let x = right;x >= left; x--) {
+              result[idx * 2] = x;
+              result[idx * 2 + 1] = bottom;
+              idx += step;
+            }
+            bottom--;
+          }
+          if (left <= right) {
+            for (let y = bottom;y >= top; y--) {
+              result[idx * 2] = left;
+              result[idx * 2 + 1] = y;
+              idx += step;
+            }
+            left++;
+          }
+        }
+        break;
+      }
+    }
+    return result;
+  }
+  function floodOrder(taskPixels, colorAt, width, height, regionOrder, fillDirection) {
+    const SIZE = width * height;
+    const LENGTH = taskPixels.length;
+    const isTask = new Uint8Array(SIZE);
+    for (let index = 0;index < LENGTH; index++)
+      isTask[taskPixels[index]] = 1;
+    const visited = new Uint8Array(SIZE);
+    const result = new Uint32Array(LENGTH);
+    const queue = new Uint32Array(LENGTH);
+    const regionStarts = [];
+    const regionLengths = [];
+    const member = new Int32Array(SIZE).fill(-1);
+    const layered = new Int32Array(SIZE).fill(-1);
+    const scratch = new Uint32Array(LENGTH);
+    let out = 0;
+    for (let index = 0;index < LENGTH; index++) {
+      const seed = taskPixels[index];
+      if (visited[seed] === 1)
+        continue;
+      const color = colorAt[seed];
+      const start = out;
+      const region = regionStarts.length;
+      let head = 0;
+      let tail = 0;
+      queue[tail++] = seed;
+      visited[seed] = 1;
+      while (head < tail) {
+        const pixel = queue[head++];
+        result[out++] = pixel;
+        member[pixel] = region;
+        const x = pixel % width;
+        const y = pixel / width | 0;
+        if (y > 0) {
+          const next = pixel - width;
+          if (visited[next] === 0 && isTask[next] === 1 && colorAt[next] === color) {
+            visited[next] = 1;
+            queue[tail++] = next;
+          }
+        }
+        if (x > 0) {
+          const next = pixel - 1;
+          if (visited[next] === 0 && isTask[next] === 1 && colorAt[next] === color) {
+            visited[next] = 1;
+            queue[tail++] = next;
+          }
+        }
+        if (x < width - 1) {
+          const next = pixel + 1;
+          if (visited[next] === 0 && isTask[next] === 1 && colorAt[next] === color) {
+            visited[next] = 1;
+            queue[tail++] = next;
+          }
+        }
+        if (y < height - 1) {
+          const next = pixel + width;
+          if (visited[next] === 0 && isTask[next] === 1 && colorAt[next] === color) {
+            visited[next] = 1;
+            queue[tail++] = next;
+          }
+        }
+      }
+      regionStarts.push(start);
+      regionLengths.push(out - start);
+      if (fillDirection === "EDGE_IN" /* EDGE_IN */)
+        layerRegion(result, scratch, queue, member, layered, region, start, out, width, height);
+    }
+    if (regionOrder === "IN_ORDER" /* IN_ORDER */)
+      return result;
+    const order = regionStarts.map((_, index) => index);
+    order.sort((a, b) => regionOrder === "LARGEST" /* LARGEST */ ? regionLengths[b] - regionLengths[a] : regionLengths[a] - regionLengths[b]);
+    const sorted = new Uint32Array(LENGTH);
+    let write = 0;
+    for (let index = 0;index < order.length; index++) {
+      const region = order[index];
+      const start = regionStarts[region];
+      const end = start + regionLengths[region];
+      for (let read = start;read < end; read++)
+        sorted[write++] = result[read];
+    }
+    return sorted;
+  }
+  function layerRegion(result, scratch, queue, member, layered, region, start, end, width, height) {
+    for (let index = start;index < end; index++)
+      scratch[index] = result[index];
+    let head = 0;
+    let tail = 0;
+    for (let index = start;index < end; index++) {
+      const pixel = scratch[index];
+      const x = pixel % width;
+      const y = pixel / width | 0;
+      if (y === 0 || member[pixel - width] !== region || x === 0 || member[pixel - 1] !== region || x === width - 1 || member[pixel + 1] !== region || y === height - 1 || member[pixel + width] !== region) {
+        layered[pixel] = region;
+        queue[tail++] = pixel;
+      }
+    }
+    let write = start;
+    while (head < tail) {
+      const pixel = queue[head++];
+      result[write++] = pixel;
+      const x = pixel % width;
+      const y = pixel / width | 0;
+      if (y > 0) {
+        const next = pixel - width;
+        if (member[next] === region && layered[next] !== region) {
+          layered[next] = region;
+          queue[tail++] = next;
+        }
+      }
+      if (x > 0) {
+        const next = pixel - 1;
+        if (member[next] === region && layered[next] !== region) {
+          layered[next] = region;
+          queue[tail++] = next;
+        }
+      }
+      if (x < width - 1) {
+        const next = pixel + 1;
+        if (member[next] === region && layered[next] !== region) {
+          layered[next] = region;
+          queue[tail++] = next;
+        }
+      }
+      if (y < height - 1) {
+        const next = pixel + width;
+        if (member[next] === region && layered[next] !== region) {
+          layered[next] = region;
+          queue[tail++] = next;
+        }
+      }
+    }
+  }
+  function outlineMask(colorAt, width, height) {
+    const mask = new Uint8Array(width * height);
+    for (let y = 0;y < height; y++)
+      for (let x = 0;x < width; x++) {
+        const pixel = y * width + x;
+        if (colorAt[pixel] === 0)
+          continue;
+        mask[pixel] = y === 0 || colorAt[pixel - width] === 0 || x === 0 || colorAt[pixel - 1] === 0 || x === width - 1 || colorAt[pixel + 1] === 0 || y === height - 1 || colorAt[pixel + width] === 0 ? 1 : 0;
+      }
+    return mask;
+  }
+  function outlineFirstOrder(taskPixels, outline) {
+    const result = new Uint32Array(taskPixels.length);
+    let write = 0;
+    for (let index = 0;index < taskPixels.length; index++) {
+      const pixel = taskPixels[index];
+      if (outline[pixel] === 1)
+        result[write++] = pixel;
+    }
+    for (let index = 0;index < taskPixels.length; index++) {
+      const pixel = taskPixels[index];
+      if (outline[pixel] === 0)
+        result[write++] = pixel;
+    }
+    return result;
+  }
+
   // src/world-position.ts
   var WORLD_TILE_SIZE = 1000;
   var WORLD_TILES = 2048;
@@ -767,6 +1070,9 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       disabledColors,
       drawColorsInOrder,
       strategy,
+      regionOrder,
+      fillDirection,
+      outlineFirst,
       unownedColorStrategy,
       globalX,
       globalY,
@@ -875,6 +1181,10 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
     }
     const positions = strategyPosition(strategy, height, width);
     const tasks = [];
+    const floodFill = regionOrder !== "OFF" /* OFF */;
+    const reorder = floodFill || outlineFirst;
+    const taskPixels = reorder ? new Uint32Array(SIZE) : undefined;
+    const taskOf = reorder ? new Int32Array(SIZE) : undefined;
     lastProgress = 0;
     for (let index = 0;index < positions.length; index += 2) {
       const progress = index / positions.length * 10 | 0;
@@ -901,12 +1211,36 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
         color,
         realColor
       });
+      if (reorder) {
+        const pixel = dy * width + dx;
+        taskPixels[tasks.length - 1] = pixel;
+        taskOf[pixel] = tasks.length - 1;
+      }
+    }
+    let ordered = tasks;
+    if (floodFill) {
+      const order = floodOrder(taskPixels.subarray(0, tasks.length), pixels2, width, height, regionOrder, fillDirection);
+      ordered = Array.from({ length: order.length });
+      for (let index = 0;index < order.length; index++)
+        ordered[index] = tasks[taskOf[order[index]]];
     }
     if (drawColorsInOrder)
-      tasks.sort((a, b) => (colorsOrderMap.get(a.color) ?? 0) - (colorsOrderMap.get(b.color) ?? 0));
-    const taskPositions = new Uint32Array(tasks.length * 2);
-    for (let index = 0;index < tasks.length; index++) {
-      const task = tasks[index];
+      ordered.sort((a, b) => (colorsOrderMap.get(a.color) ?? 0) - (colorsOrderMap.get(b.color) ?? 0));
+    if (outlineFirst) {
+      const current = new Uint32Array(ordered.length);
+      for (let index = 0;index < ordered.length; index++) {
+        const task = ordered[index];
+        current[index] = (task.gy - globalY) * width + (task.gx - globalX);
+      }
+      const order = outlineFirstOrder(current, outlineMask(pixels2, width, height));
+      const outlined = Array.from({ length: order.length });
+      for (let index = 0;index < order.length; index++)
+        outlined[index] = tasks[taskOf[order[index]]];
+      ordered = outlined;
+    }
+    const taskPositions = new Uint32Array(ordered.length * 2);
+    for (let index = 0;index < ordered.length; index++) {
+      const task = ordered[index];
       const dIndex = index * 2;
       taskPositions[dIndex] = task.gx;
       taskPositions[dIndex + 1] = task.gy;
@@ -917,107 +1251,6 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       colorStat,
       pixels: pixels2
     }, [taskPositions.buffer, pixels2.buffer]);
-  }
-  function strategyPosition(strategy, height, width) {
-    const SIZE = width * height;
-    const result = new Uint16Array(SIZE * 2);
-    let index = 0;
-    switch (strategy) {
-      case "DOWN" /* DOWN */: {
-        for (let y = 0;y < height; y++)
-          for (let x = 0;x < width; x++) {
-            result[index] = x;
-            result[index + 1] = y;
-            index += 2;
-          }
-        break;
-      }
-      case "UP" /* UP */: {
-        for (let y = height - 1;y >= 0; y--)
-          for (let x = 0;x < width; x++) {
-            result[index] = x;
-            result[index + 1] = y;
-            index += 2;
-          }
-        break;
-      }
-      case "LEFT" /* LEFT */: {
-        for (let x = 0;x < width; x++)
-          for (let y = 0;y < height; y++) {
-            result[index] = x;
-            result[index + 1] = y;
-            index += 2;
-          }
-        break;
-      }
-      case "RIGHT" /* RIGHT */: {
-        for (let x = width - 1;x >= 0; x--)
-          for (let y = 0;y < height; y++) {
-            result[index] = x;
-            result[index + 1] = y;
-            index += 2;
-          }
-        break;
-      }
-      case "RANDOM" /* RANDOM */: {
-        for (let y = 0;y < height; y++)
-          for (let x = 0;x < width; x++) {
-            result[index] = x;
-            result[index + 1] = y;
-            index += 2;
-          }
-        for (let index2 = SIZE - 1;index2 >= 0; index2--) {
-          const randIndex = Math.floor(Math.random() * (index2 + 1)) * 2;
-          const realIndex = index2 * 2;
-          const temporaryX = result[realIndex];
-          const temporaryY = result[realIndex + 1];
-          result[realIndex] = result[randIndex];
-          result[realIndex + 1] = result[randIndex + 1];
-          result[randIndex] = temporaryX;
-          result[randIndex + 1] = temporaryY;
-        }
-        break;
-      }
-      case "SPIRAL_FROM_CENTER" /* SPIRAL_FROM_CENTER */:
-      case "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */: {
-        const reverse = strategy === "SPIRAL_FROM_CENTER" /* SPIRAL_FROM_CENTER */;
-        let idx = reverse ? SIZE - 1 : 0;
-        const step = reverse ? -1 : 1;
-        let top = 0, bottom = height - 1, left = 0, right = width - 1;
-        while (top <= bottom && left <= right) {
-          for (let x = left;x <= right; x++) {
-            result[idx * 2] = x;
-            result[idx * 2 + 1] = top;
-            idx += step;
-          }
-          top++;
-          for (let y = top;y <= bottom; y++) {
-            result[idx * 2] = right;
-            result[idx * 2 + 1] = y;
-            idx += step;
-          }
-          right--;
-          if (top <= bottom) {
-            for (let x = right;x >= left; x--) {
-              result[idx * 2] = x;
-              result[idx * 2 + 1] = bottom;
-              idx += step;
-            }
-            bottom--;
-          }
-          if (left <= right) {
-            for (let y = bottom;y >= top; y--) {
-              result[idx * 2] = left;
-              result[idx * 2 + 1] = y;
-              idx += step;
-            }
-            left++;
-          }
-        }
-        break;
-      }
-    }
-    return result;
   }
   var mapsCache = new Map;
   function readMap(id, x, y, width, height) {
@@ -1384,6 +1617,9 @@ class BotImage extends Base2 {
   unownedColorStrategy;
   wplaceId;
   siteDisabled;
+  regionOrder;
+  fillDirection;
+  outlineFirst;
   static async fromJSON(bot, data, progress) {
     const image = new Image;
     image.src = data.url.startsWith("http") ? await fetch(data.url, { cache: "no-store" }).then((x) => x.blob()).then((x) => URL.createObjectURL(x)) : data.url;
@@ -1392,7 +1628,7 @@ class BotImage extends Base2 {
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(image, 0, 0);
-    const botImage = new BotImage(bot, data.position ? WorldPosition.fromJSON(bot, data.position) : undefined, canvas, data.width, data.height, data.brightness, data.colorMetric, data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, new Set(data.disabledColors), data.lock, data.disabled, data.name, data.unownedColorStrategy, data.wplaceId, data.siteDisabled);
+    const botImage = new BotImage(bot, data.position ? WorldPosition.fromJSON(bot, data.position) : undefined, canvas, data.width, data.height, data.brightness, data.colorMetric, data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, new Set(data.disabledColors), data.lock, data.disabled, data.name, data.unownedColorStrategy, data.wplaceId, data.siteDisabled, data.regionOrder, data.fillDirection, data.outlineFirst);
     await botImage.updatePixels(progress);
     return botImage;
   }
@@ -1436,12 +1672,19 @@ class BotImage extends Base2 {
   $name;
   $unownedColorStrategyLabel;
   $unownedColorStrategy;
+  $outlineFirst;
+  $regionOrderLabel;
+  $regionOrder;
+  $fillDirectionLabel;
+  $fillDirection;
+  $sortColorsDesc;
+  $sortColorsAsc;
   $openSettings;
   $dialog;
   constructor(bot, position = WorldPosition.fromScreenPosition(bot, {
     x: 256,
     y: 32
-  }), image, width = image.width, heightOverride, brightness = 0, colorMetric = "lab", strategy = "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */, opacity = 50, drawTransparentPixels = false, drawColorsInOrder = true, colors = [], disabledColors = new Set, lock = false, disabled = false, name = `${image.width}x${image.height}`, unownedColorStrategy = "BUY" /* BUY */, wplaceId, siteDisabled = false) {
+  }), image, width = image.width, heightOverride, brightness = 0, colorMetric = "lab", strategy = "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */, opacity = 50, drawTransparentPixels = false, drawColorsInOrder = true, colors = [], disabledColors = new Set, lock = false, disabled = false, name = `${image.width}x${image.height}`, unownedColorStrategy = "BUY" /* BUY */, wplaceId, siteDisabled = false, regionOrder = "OFF" /* OFF */, fillDirection = "SEED_OUT" /* SEED_OUT */, outlineFirst = false) {
     super();
     this.bot = bot;
     this.position = position;
@@ -1462,6 +1705,9 @@ class BotImage extends Base2 {
     this.unownedColorStrategy = unownedColorStrategy;
     this.wplaceId = wplaceId;
     this.siteDisabled = siteDisabled;
+    this.regionOrder = regionOrder;
+    this.fillDirection = fillDirection;
+    this.outlineFirst = outlineFirst;
     this.bot.images.push(this);
     this.resolution = image.width / image.height;
     this.imageData = this.image.getContext("2d").getImageData(0, 0, image.width, image.height).data;
@@ -1489,12 +1735,19 @@ class BotImage extends Base2 {
       $wrapper: ".wrapper",
       $name: ".name",
       $unownedColorStrategyLabel: ".unowned-color-strategy",
+      $outlineFirst: ".outline-first",
+      $regionOrderLabel: ".region-order",
+      $fillDirectionLabel: ".fill-direction",
+      $sortColorsDesc: ".sort-colors-desc",
+      $sortColorsAsc: ".sort-colors-asc",
       $openSettings: ".open-settings",
       $dialog: "dialog",
       $canvas: "canvas"
     });
     this.context = this.$canvas.getContext("2d");
     this.$unownedColorStrategy = this.$unownedColorStrategyLabel.querySelector("select");
+    this.$regionOrder = this.$regionOrderLabel.querySelector("select");
+    this.$fillDirection = this.$fillDirectionLabel.querySelector("select");
     this.$resetSizeSpan = this.$resetSize.querySelector("span");
     this.$openSettings.addEventListener("click", () => {
       this.$dialog.showModal();
@@ -1513,10 +1766,36 @@ class BotImage extends Base2 {
       await this.updatePixels();
       await save(this.bot);
     });
-    this.$strategy.addEventListener("change", () => {
+    this.$strategy.addEventListener("change", async () => {
       this.strategy = this.$strategy.value;
-      save(this.bot);
+      await this.updatePixels();
+      await save(this.bot);
     });
+    this.$regionOrder.addEventListener("change", async () => {
+      this.regionOrder = this.$regionOrder.value;
+      await this.updatePixels();
+      await save(this.bot);
+    });
+    this.$fillDirection.addEventListener("change", async () => {
+      this.fillDirection = this.$fillDirection.value;
+      await this.updatePixels();
+      await save(this.bot);
+    });
+    this.$outlineFirst.addEventListener("click", async () => {
+      this.outlineFirst = this.$outlineFirst.checked;
+      await this.updatePixels();
+      await save(this.bot);
+    });
+    const sortColors = async (ascending) => {
+      const amounts = new Map;
+      for (const stat of this.colorsStat.values())
+        amounts.set(stat.realColor, stat.amount);
+      this.colors = sortColorsByAmount(this.colors, amounts, ascending);
+      await this.updatePixels();
+      await save(this.bot);
+    };
+    this.$sortColorsDesc.addEventListener("click", () => void sortColors(false));
+    this.$sortColorsAsc.addEventListener("click", () => void sortColors(true));
     this.$opacity.addEventListener("input", () => {
       this.opacity = this.$opacity.valueAsNumber;
       this.$opacity.style.setProperty("--val", this.opacity + "%");
@@ -1544,14 +1823,15 @@ class BotImage extends Base2 {
       await this.updatePixels();
       await save(this.bot);
     });
-    this.$drawTransparent.addEventListener("click", () => {
+    this.$drawTransparent.addEventListener("click", async () => {
       this.drawTransparentPixels = this.$drawTransparent.checked;
-      save(this.bot);
+      await this.updatePixels();
+      await save(this.bot);
     });
-    this.$drawColorsInOrder.addEventListener("click", () => {
+    this.$drawColorsInOrder.addEventListener("click", async () => {
       this.drawColorsInOrder = this.$drawColorsInOrder.checked;
-      this.updateColors();
-      save(this.bot);
+      await this.updatePixels();
+      await save(this.bot);
     });
     this.$lock.addEventListener("click", () => {
       this.lock = !this.lock;
@@ -1630,6 +1910,9 @@ class BotImage extends Base2 {
       unownedColorStrategy: this.unownedColorStrategy,
       wplaceId: this.wplaceId,
       siteDisabled: this.siteDisabled,
+      regionOrder: this.regionOrder,
+      fillDirection: this.fillDirection,
+      outlineFirst: this.outlineFirst,
       version: SAVE_VERSION
     };
   }
@@ -1677,6 +1960,9 @@ class BotImage extends Base2 {
       nativeHeight: this.image.height,
       nativeWidth: this.image.width,
       strategy: this.strategy,
+      regionOrder: this.regionOrder,
+      fillDirection: this.fillDirection,
+      outlineFirst: this.outlineFirst,
       unavailableColors: this.bot.unavailableColors,
       unownedColorStrategy: this.unownedColorStrategy
     }, progress2);
@@ -1722,6 +2008,13 @@ class BotImage extends Base2 {
     this.$opacity.valueAsNumber = this.opacity;
     this.$drawTransparent.checked = this.drawTransparentPixels;
     this.$drawColorsInOrder.checked = this.drawColorsInOrder;
+    this.$outlineFirst.checked = this.outlineFirst;
+    this.$regionOrder.value = this.regionOrder;
+    this.$fillDirection.value = this.fillDirection;
+    if (this.regionOrder === "OFF" /* OFF */)
+      addClass(this.$fillDirectionLabel, "hidden");
+    else
+      removeClass(this.$fillDirectionLabel, "hidden");
     this.$name.value = this.name;
     const maxTasks = this.width * this.height;
     const doneTasks = maxTasks - this.tasks.length / 2;
@@ -1837,12 +2130,12 @@ class BotImage extends Base2 {
         this.registerEvent(document, "mouseup", () => {
           removeClass($button, "dragging");
           document.removeEventListener("mousemove", mouseMoveHandler);
-          if (newIndex !== index)
-            this.colors.splice(newIndex, 0, ...this.colors.splice(index, 1));
-          save(this.bot);
           $button.removeEventListener("mousedown", startDrag);
+          if (newIndex === index)
+            return;
+          this.colors.splice(newIndex, 0, ...this.colors.splice(index, 1));
           setTimeout(() => {
-            this.updateColors();
+            this.updatePixels().then(() => save(this.bot));
           }, 200);
         }, {
           once: true
@@ -2355,6 +2648,20 @@ dialog.export-dialog::backdrop {
 .no-pointer-events {
   height: 1px;
   pointer-events: none;
+}
+
+/* A setting that only means something while its parent is on */
+.form .nested {
+  width: calc(100% - 36px);
+  margin-left: 32px;
+}
+
+.colors-sort {
+  gap: 4px;
+}
+
+.colors-sort button {
+  flex: 1;
 }
 
 /** Site-managed templates: the site owns placement, so hide our editors */

@@ -7,11 +7,16 @@ import {
   metricFunction,
   rgbToLab,
 } from './colors'
+import { type PixelColorStat, UnownedColorStrategy } from './image'
 import {
-  ImageStrategy,
-  type PixelColorStat,
-  UnownedColorStrategy,
-} from './image'
+  type FillDirection,
+  floodOrder,
+  type ImageStrategy,
+  outlineFirstOrder,
+  outlineMask,
+  RegionOrder,
+  strategyPosition,
+} from './ordering'
 import { WORLD_TILE_SIZE } from './world-position'
 
 export type WorkerPixelsRequest = {
@@ -29,6 +34,9 @@ export type WorkerPixelsRequest = {
   disabledColors: Set<number>
   unownedColorStrategy: UnownedColorStrategy
   strategy: ImageStrategy
+  regionOrder: RegionOrder
+  fillDirection: FillDirection
+  outlineFirst: boolean
   globalX: number
   globalY: number
   drawTransparentPixels: boolean
@@ -82,6 +90,9 @@ function pixels(request: WorkerPixelsRequest) {
     disabledColors,
     drawColorsInOrder,
     strategy,
+    regionOrder,
+    fillDirection,
+    outlineFirst,
     unownedColorStrategy,
     globalX,
     globalY,
@@ -198,6 +209,11 @@ function pixels(request: WorkerPixelsRequest) {
   const positions = strategyPosition(strategy, height, width)
   const tasks: { gx: number; gy: number; color: number; realColor: number }[] =
     []
+  // Flood fill and outline both work on pixels, so keep the way back to tasks
+  const floodFill = regionOrder !== RegionOrder.OFF
+  const reorder = floodFill || outlineFirst
+  const taskPixels = reorder ? new Uint32Array(SIZE) : undefined
+  const taskOf = reorder ? new Int32Array(SIZE) : undefined
   lastProgress = 0
   for (let index = 0; index < positions.length; index += 2) {
     const progress = ((index / positions.length) * 10) | 0
@@ -228,17 +244,53 @@ function pixels(request: WorkerPixelsRequest) {
       color,
       realColor,
     })
+    if (reorder) {
+      const pixel = dy * width + dx
+      taskPixels![tasks.length - 1] = pixel
+      taskOf![pixel] = tasks.length - 1
+    }
+  }
+
+  // Each pass is a stable reordering, so the last one applied wins ties:
+  // outline phase beats color, which beats blob, which beats the strategy
+  let ordered = tasks
+  if (floodFill) {
+    const order = floodOrder(
+      taskPixels!.subarray(0, tasks.length),
+      pixels,
+      width,
+      height,
+      regionOrder,
+      fillDirection,
+    )
+    ordered = Array.from({ length: order.length })
+    for (let index = 0; index < order.length; index++)
+      ordered[index] = tasks[taskOf![order[index]!]!]!
   }
   if (drawColorsInOrder)
-    tasks.sort(
+    ordered.sort(
       (a, b) =>
         (colorsOrderMap.get(a.color) ?? 0) - (colorsOrderMap.get(b.color) ?? 0),
     )
+  if (outlineFirst) {
+    // Applied over what the color sort left, so an outline stays one line
+    // instead of arriving color by color
+    const current = new Uint32Array(ordered.length)
+    for (let index = 0; index < ordered.length; index++) {
+      const task = ordered[index]!
+      current[index] = (task.gy - globalY) * width + (task.gx - globalX)
+    }
+    const order = outlineFirstOrder(current, outlineMask(pixels, width, height))
+    const outlined: typeof tasks = Array.from({ length: order.length })
+    for (let index = 0; index < order.length; index++)
+      outlined[index] = tasks[taskOf![order[index]!]!]!
+    ordered = outlined
+  }
 
   // Sending
-  const taskPositions = new Uint32Array(tasks.length * 2)
-  for (let index = 0; index < tasks.length; index++) {
-    const task = tasks[index]!
+  const taskPositions = new Uint32Array(ordered.length * 2)
+  for (let index = 0; index < ordered.length; index++) {
+    const task = ordered[index]!
     const dIndex = index * 2
     taskPositions[dIndex] = task.gx
     taskPositions[dIndex + 1] = task.gy
@@ -252,119 +304,6 @@ function pixels(request: WorkerPixelsRequest) {
     } satisfies WorkerPixelsResponse,
     [taskPositions.buffer, pixels.buffer],
   )
-}
-
-/** Returns array array there index*2=x, index*2+1=y */
-function strategyPosition(
-  strategy: ImageStrategy,
-  height: number,
-  width: number,
-) {
-  const SIZE = width * height
-  const result = new Uint16Array(SIZE * 2) // Max 65535
-  let index = 0
-  switch (strategy) {
-    case ImageStrategy.DOWN: {
-      for (let y = 0; y < height; y++)
-        for (let x = 0; x < width; x++) {
-          result[index] = x
-          result[index + 1] = y
-          index += 2
-        }
-      break
-    }
-    case ImageStrategy.UP: {
-      for (let y = height - 1; y >= 0; y--)
-        for (let x = 0; x < width; x++) {
-          result[index] = x
-          result[index + 1] = y
-          index += 2
-        }
-      break
-    }
-    case ImageStrategy.LEFT: {
-      for (let x = 0; x < width; x++)
-        for (let y = 0; y < height; y++) {
-          result[index] = x
-          result[index + 1] = y
-          index += 2
-        }
-      break
-    }
-    case ImageStrategy.RIGHT: {
-      for (let x = width - 1; x >= 0; x--)
-        for (let y = 0; y < height; y++) {
-          result[index] = x
-          result[index + 1] = y
-          index += 2
-        }
-      break
-    }
-    case ImageStrategy.RANDOM: {
-      for (let y = 0; y < height; y++)
-        for (let x = 0; x < width; x++) {
-          result[index] = x
-          result[index + 1] = y
-          index += 2
-        }
-      for (let index = SIZE - 1; index >= 0; index--) {
-        const randIndex = Math.floor(Math.random() * (index + 1)) * 2
-        const realIndex = index * 2
-        const temporaryX = result[realIndex]!
-        const temporaryY = result[realIndex + 1]!
-        result[realIndex] = result[randIndex]!
-        result[realIndex + 1] = result[randIndex + 1]!
-        result[randIndex] = temporaryX
-        result[randIndex + 1] = temporaryY
-      }
-      break
-    }
-
-    case ImageStrategy.SPIRAL_FROM_CENTER:
-    case ImageStrategy.SPIRAL_TO_CENTER: {
-      const reverse = strategy === ImageStrategy.SPIRAL_FROM_CENTER
-      let idx = reverse ? SIZE - 1 : 0
-      const step = reverse ? -1 : 1
-
-      let top = 0,
-        bottom = height - 1,
-        left = 0,
-        right = width - 1
-
-      while (top <= bottom && left <= right) {
-        for (let x = left; x <= right; x++) {
-          result[idx * 2] = x
-          result[idx * 2 + 1] = top
-          idx += step
-        }
-        top++
-        for (let y = top; y <= bottom; y++) {
-          result[idx * 2] = right
-          result[idx * 2 + 1] = y
-          idx += step
-        }
-        right--
-        if (top <= bottom) {
-          for (let x = right; x >= left; x--) {
-            result[idx * 2] = x
-            result[idx * 2 + 1] = bottom
-            idx += step
-          }
-          bottom--
-        }
-        if (left <= right) {
-          for (let y = bottom; y >= top; y--) {
-            result[idx * 2] = left
-            result[idx * 2 + 1] = y
-            idx += step
-          }
-          left++
-        }
-      }
-      break
-    }
-  }
-  return result
 }
 
 const mapsCache = new Map<number, Uint8Array>()

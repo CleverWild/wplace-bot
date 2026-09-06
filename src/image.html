@@ -52,6 +52,27 @@
     <label>
       <input type="checkbox" class="draw-colors-in-order" />&nbsp;Draw colors in order
     </label>
+    <label title="The silhouette, meaning whatever touches transparency or the image edge, before everything it encloses">
+      <input type="checkbox" class="outline-first" />&nbsp;Outline first
+    </label>
+    <label class="region-order" title="Finish one blob of a color before starting the next, and which blob goes first">
+      Fill regions:&nbsp;<select>
+        <option value="OFF" selected>Off</option>
+        <option value="IN_ORDER">In drawing order</option>
+        <option value="LARGEST">Largest first</option>
+        <option value="SMALLEST">Smallest first</option>
+      </select>
+    </label>
+    <label class="nested fill-direction" title="How a single blob is filled in">
+      Fill:&nbsp;<select>
+        <option value="SEED_OUT" selected>From seed outward</option>
+        <option value="EDGE_IN">From edge inward</option>
+      </select>
+    </label>
+    <div class="colors-sort">
+      <button class="sort-colors-desc" title="Order colors by pixel count, most first">↓ Most</button>
+      <button class="sort-colors-asc" title="Order colors by pixel count, fewest first">↑ Fewest</button>
+    </div>
     <div class="colors"></div>
   </dialog>
   <dialog class="export-dialog">
