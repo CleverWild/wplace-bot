@@ -209,11 +209,9 @@ export class Widget extends Base {
         void save(this.bot)
       })
       const $enabled = querySelector<HTMLInputElement>($image, '.enabled')!
-      // Name and visibility belong to the site for imported templates
-      if (image.wplaceId) {
-        $name.readOnly = true
-        $enabled.disabled = true
-      }
+      // The name belongs to the site for imported templates, but the switch
+      // is ours: the site's own visibility is tracked separately
+      if (image.wplaceId) $name.readOnly = true
       $enabled.addEventListener('change', async () => {
         image.disabled = !$enabled.checked
         await image.updatePixels()

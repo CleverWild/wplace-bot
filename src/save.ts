@@ -12,7 +12,7 @@ const DB_NAME = 'wbot'
 const STORE_NAME = 'saves'
 const KEY_NAME = 'wbot'
 const DB_VERSION = 1
-export const SAVE_VERSION = 3
+export const SAVE_VERSION = 4
 
 const dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
   const request = indexedDB.open(DB_NAME, DB_VERSION)
@@ -112,41 +112,54 @@ async function migrateSaveFromLS() {
 export function migrateImage(
   old: any,
 ): Awaited<ReturnType<BotImage['toJSON']>> {
-  if (!old.version || old.version < SAVE_VERSION) {
-    const { url, width, brightness } = old.pixels
-    return {
-      url,
-      width,
+  let image = old
+  if (!image.version || image.version < 3)
+    image = {
+      url: image.pixels.url,
+      width: image.pixels.width,
       height: undefined,
-      brightness,
+      brightness: image.pixels.brightness,
       colorMetric: 'lab' as const,
-      position: old.position,
+      position: image.position,
       strategy: ImageStrategy.SPIRAL_TO_CENTER,
-      opacity: old.opacity,
-      drawTransparentPixels: old.drawTransparentPixels,
-      drawColorsInOrder: old.drawColorsInOrder,
+      opacity: image.opacity,
+      drawTransparentPixels: image.drawTransparentPixels,
+      drawColorsInOrder: image.drawColorsInOrder,
       colors: [],
       disabledColors: [],
-      lock: old.lock,
+      lock: image.lock,
       disabled: false,
       name: `Unnamed image`,
       unownedColorStrategy: UnownedColorStrategy.BUY,
       wplaceId: undefined,
       version: 3,
     }
-  }
-  return old
+  // `disabled` used to hold the site's visibility for imported templates.
+  // It is the user's own switch now, so hand the old value to `siteDisabled`
+  if (image.version < 4)
+    image = {
+      ...image,
+      disabled: image.wplaceId ? false : Boolean(image.disabled),
+      siteDisabled: image.wplaceId ? Boolean(image.disabled) : false,
+      version: 4,
+    }
+  return image
 }
 
 /** How to migrate save data */
 export function migrate(old: any): Awaited<ReturnType<WPlaceBot['toJSON']>> {
-  if (!old.version || old.version < SAVE_VERSION) {
-    return {
+  let save = old
+  if (!save.version || save.version < 3)
+    save = {
       version: 3,
-      images: old.images.map(migrateImage),
-      strategy: old.strategy,
+      images: save.images,
+      strategy: save.strategy,
       title: 'WPlace-bot',
     }
+  // Images carry their own version, so migrate them whatever the save says
+  return {
+    ...save,
+    version: SAVE_VERSION,
+    images: save.images.map(migrateImage),
   }
-  return old
 }

@@ -199,6 +199,6 @@ export function toWplaceFile(image: BotImage, order = 0): WplaceFile {
     order,
     locked: image.lock,
     hasPlaced: false,
-    visible: !image.disabled,
+    visible: image.visible,
   }
 }

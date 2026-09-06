@@ -371,7 +371,7 @@ var DB_NAME = "wbot";
 var STORE_NAME = "saves";
 var KEY_NAME = "wbot";
 var DB_VERSION = 1;
-var SAVE_VERSION = 3;
+var SAVE_VERSION = 4;
 var dbPromise = new Promise((resolve, reject) => {
   const request = indexedDB.open(DB_NAME, DB_VERSION);
   request.onupgradeneeded = () => {
@@ -459,41 +459,51 @@ async function migrateSaveFromLS() {
   }
 }
 function migrateImage(old) {
-  if (!old.version || old.version < SAVE_VERSION) {
-    const { url, width, brightness } = old.pixels;
-    return {
-      url,
-      width,
+  let image = old;
+  if (!image.version || image.version < 3)
+    image = {
+      url: image.pixels.url,
+      width: image.pixels.width,
       height: undefined,
-      brightness,
+      brightness: image.pixels.brightness,
       colorMetric: "lab",
-      position: old.position,
+      position: image.position,
       strategy: "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */,
-      opacity: old.opacity,
-      drawTransparentPixels: old.drawTransparentPixels,
-      drawColorsInOrder: old.drawColorsInOrder,
+      opacity: image.opacity,
+      drawTransparentPixels: image.drawTransparentPixels,
+      drawColorsInOrder: image.drawColorsInOrder,
       colors: [],
       disabledColors: [],
-      lock: old.lock,
+      lock: image.lock,
       disabled: false,
       name: `Unnamed image`,
       unownedColorStrategy: "BUY" /* BUY */,
       wplaceId: undefined,
       version: 3
     };
-  }
-  return old;
+  if (image.version < 4)
+    image = {
+      ...image,
+      disabled: image.wplaceId ? false : Boolean(image.disabled),
+      siteDisabled: image.wplaceId ? Boolean(image.disabled) : false,
+      version: 4
+    };
+  return image;
 }
 function migrate(old) {
-  if (!old.version || old.version < SAVE_VERSION) {
-    return {
+  let save2 = old;
+  if (!save2.version || save2.version < 3)
+    save2 = {
       version: 3,
-      images: old.images.map(migrateImage),
-      strategy: old.strategy,
+      images: save2.images,
+      strategy: save2.strategy,
       title: "WPlace-bot"
     };
-  }
-  return old;
+  return {
+    ...save2,
+    version: SAVE_VERSION,
+    images: save2.images.map(migrateImage)
+  };
 }
 
 // src/utils.ts
@@ -1343,7 +1353,7 @@ function toWplaceFile(image, order = 0) {
     order,
     locked: image.lock,
     hasPlaced: false,
-    visible: !image.disabled
+    visible: image.visible
   };
 }
 
@@ -1374,6 +1384,7 @@ class BotImage extends Base2 {
   name;
   unownedColorStrategy;
   wplaceId;
+  siteDisabled;
   static async fromJSON(bot, data, progress) {
     const image = new Image;
     image.src = data.url.startsWith("http") ? await fetch(data.url, { cache: "no-store" }).then((x) => x.blob()).then((x) => URL.createObjectURL(x)) : data.url;
@@ -1382,7 +1393,7 @@ class BotImage extends Base2 {
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(image, 0, 0);
-    const botImage = new BotImage(bot, data.position ? WorldPosition.fromJSON(bot, data.position) : undefined, canvas, data.width, data.height, data.brightness, data.colorMetric, data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, new Set(data.disabledColors), data.lock, data.disabled, data.name, data.unownedColorStrategy, data.wplaceId);
+    const botImage = new BotImage(bot, data.position ? WorldPosition.fromJSON(bot, data.position) : undefined, canvas, data.width, data.height, data.brightness, data.colorMetric, data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, new Set(data.disabledColors), data.lock, data.disabled, data.name, data.unownedColorStrategy, data.wplaceId, data.siteDisabled);
     await botImage.updatePixels(progress);
     return botImage;
   }
@@ -1394,6 +1405,9 @@ class BotImage extends Base2 {
   }
   set height(value) {
     this.heightOverride = value;
+  }
+  get visible() {
+    return !this.disabled && !this.siteDisabled;
   }
   tasks = new Uint32Array(0);
   moveInfo;
@@ -1428,7 +1442,7 @@ class BotImage extends Base2 {
   constructor(bot, position = WorldPosition.fromScreenPosition(bot, {
     x: 256,
     y: 32
-  }), image, width = image.width, heightOverride, brightness = 0, colorMetric = "lab", strategy = "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */, opacity = 50, drawTransparentPixels = false, drawColorsInOrder = true, colors = [], disabledColors = new Set, lock = false, disabled = false, name = `${image.width}x${image.height}`, unownedColorStrategy = "BUY" /* BUY */, wplaceId) {
+  }), image, width = image.width, heightOverride, brightness = 0, colorMetric = "lab", strategy = "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */, opacity = 50, drawTransparentPixels = false, drawColorsInOrder = true, colors = [], disabledColors = new Set, lock = false, disabled = false, name = `${image.width}x${image.height}`, unownedColorStrategy = "BUY" /* BUY */, wplaceId, siteDisabled = false) {
     super();
     this.bot = bot;
     this.position = position;
@@ -1448,6 +1462,7 @@ class BotImage extends Base2 {
     this.name = name;
     this.unownedColorStrategy = unownedColorStrategy;
     this.wplaceId = wplaceId;
+    this.siteDisabled = siteDisabled;
     this.bot.images.push(this);
     this.resolution = image.width / image.height;
     this.imageData = this.image.getContext("2d").getImageData(0, 0, image.width, image.height).data;
@@ -1615,6 +1630,7 @@ class BotImage extends Base2 {
       name: this.name,
       unownedColorStrategy: this.unownedColorStrategy,
       wplaceId: this.wplaceId,
+      siteDisabled: this.siteDisabled,
       version: SAVE_VERSION
     };
   }
@@ -1622,14 +1638,14 @@ class BotImage extends Base2 {
     const [globalX, globalY] = data.position;
     const disabled = data.disabled;
     const moved = this.position.globalX !== globalX || this.position.globalY !== globalY || this.width !== data.width || this.height !== data.height;
-    const redraw = moved || this.disabled !== disabled;
+    const redraw = moved || this.siteDisabled !== disabled;
     if (!redraw && this.name === (data.name ?? this.name) && this.lock === (data.lock ?? this.lock))
       return false;
     this.position.globalX = globalX;
     this.position.globalY = globalY;
     this.width = data.width;
     this.height = data.height;
-    this.disabled = disabled;
+    this.siteDisabled = disabled;
     if (data.name !== undefined)
       this.name = data.name;
     if (data.lock !== undefined)
@@ -1666,7 +1682,7 @@ class BotImage extends Base2 {
       unownedColorStrategy: this.unownedColorStrategy
     }, progress2);
     this.colorsStat = result.colorStat;
-    this.tasks = this.disabled ? new Uint32Array(0) : result.taskPositions;
+    this.tasks = this.visible ? result.taskPositions : new Uint32Array(0);
     this.pixels = result.pixels;
     this.$canvas.width = width;
     this.$canvas.height = height;
@@ -1695,9 +1711,11 @@ class BotImage extends Base2 {
     this.element.style.transform = `translate(${x}px, ${y}px)`;
     this.element.style.width = `${this.position.pixelSize * this.width}px`;
     this.$canvas.style.height = `${this.position.pixelSize * this.height}px`;
-    this.$wrapper.style.opacity = this.disabled ? "0.4" : "1";
     this.$canvas.style.opacity = `${this.opacity}%`;
-    removeClass(this.element, "hidden");
+    if (this.visible)
+      removeClass(this.element, "hidden");
+    else
+      addClass(this.element, "hidden");
     this.$resetSizeSpan.textContent = `${this.width}x${this.height}`;
     this.$brightness.valueAsNumber = this.brightness;
     this.$strategy.value = this.strategy;
@@ -2543,10 +2561,8 @@ class Widget extends Base2 {
         save(this.bot);
       });
       const $enabled = querySelector($image, ".enabled");
-      if (image.wplaceId) {
+      if (image.wplaceId)
         $name.readOnly = true;
-        $enabled.disabled = true;
-      }
       $enabled.addEventListener("change", async () => {
         image.disabled = !$enabled.checked;
         await image.updatePixels();
@@ -2739,7 +2755,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       const colorsToBuyMap = new Map;
       for (let index = 0;index < this.images.length; index++) {
         const image = this.images[index];
-        if (image.disabled)
+        if (!image.visible)
           continue;
         tasksLength += image.tasks.length / 2;
         if (image.unownedColorStrategy === "BUY" /* BUY */) {
@@ -2818,7 +2834,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
             let end = true;
             for (let imageIndex = 0;imageIndex < this.images.length; imageIndex++) {
               const image = this.images[imageIndex];
-              if (image.disabled)
+              if (!image.visible)
                 continue;
               if (await drawTask(image))
                 end = false;
@@ -2834,7 +2850,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
             let minImage;
             for (let imageIndex = 0;imageIndex < this.images.length; imageIndex++) {
               const image = this.images[imageIndex];
-              if (image.disabled)
+              if (!image.visible)
                 continue;
               const percent = 1 - image.tasks.length / 2 / (image.width * image.height);
               if (percent < minPercent) {
@@ -2850,7 +2866,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         case "SEQUENTIAL" /* SEQUENTIAL */: {
           for (let imageIndex = 0;imageIndex < this.images.length; imageIndex++) {
             const image = this.images[imageIndex];
-            if (image.disabled)
+            if (!image.visible)
               continue;
             for (let i = 0;i < image.tasks.length / 2 && charges > 0; i++)
               await drawTask(image);
@@ -2914,7 +2930,14 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         const url = await readSiteTemplateImage(template.id);
         if (!url)
           continue;
-        await BotImage.fromJSON(this, { ...template.data, opacity: 0, url, wplaceId: template.id }, (p) => {
+        await BotImage.fromJSON(this, {
+          ...template.data,
+          opacity: 0,
+          url,
+          wplaceId: template.id,
+          disabled: false,
+          siteDisabled: template.data.disabled
+        }, (p) => {
           progress(index * batchSize + p * batchSize);
         });
       }

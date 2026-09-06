@@ -102,6 +102,7 @@ export class BotImage extends Base {
       data.name,
       data.unownedColorStrategy,
       data.wplaceId,
+      data.siteDisabled,
     )
     await botImage.updatePixels(progress)
     return botImage
@@ -121,6 +122,11 @@ export class BotImage extends Base {
   }
   public set height(value: number) {
     this.heightOverride = value
+  }
+
+  /** Both switches have to be on: ours and, for site templates, the site's */
+  public get visible() {
+    return !this.disabled && !this.siteDisabled
   }
 
   /** Pixels to draw */
@@ -209,6 +215,11 @@ export class BotImage extends Base {
      * from the user and overwritten whenever the template changes.
      */
     public readonly wplaceId?: string,
+    /**
+     * Visibility as the site last reported it. Kept apart from `disabled` so
+     * switching a template off here is not undone by the next sync.
+     */
+    public siteDisabled = false,
   ) {
     super()
     this.bot.images.push(this)
@@ -432,6 +443,7 @@ export class BotImage extends Base {
       name: this.name,
       unownedColorStrategy: this.unownedColorStrategy,
       wplaceId: this.wplaceId,
+      siteDisabled: this.siteDisabled,
       version: SAVE_VERSION,
     }
   }
@@ -448,7 +460,7 @@ export class BotImage extends Base {
       this.position.globalY !== globalY ||
       this.width !== data.width ||
       this.height !== data.height
-    const redraw = moved || this.disabled !== disabled
+    const redraw = moved || this.siteDisabled !== disabled
     if (
       !redraw &&
       this.name === (data.name ?? this.name) &&
@@ -459,7 +471,7 @@ export class BotImage extends Base {
     this.position.globalY = globalY
     this.width = data.width
     this.height = data.height
-    this.disabled = disabled
+    this.siteDisabled = disabled
     if (data.name !== undefined) this.name = data.name
     if (data.lock !== undefined) this.lock = data.lock
     if (redraw) {
@@ -500,7 +512,7 @@ export class BotImage extends Base {
       progress2,
     )
     this.colorsStat = result.colorStat
-    this.tasks = this.disabled ? new Uint32Array(0) : result.taskPositions
+    this.tasks = this.visible ? result.taskPositions : new Uint32Array(0)
     this.pixels = result.pixels
     this.$canvas.width = width
     this.$canvas.height = height
@@ -531,9 +543,10 @@ export class BotImage extends Base {
     // Height is free-form, so drive it too; otherwise a vertical resize would
     // only preview on the next redraw (mouseup) instead of live
     this.$canvas.style.height = `${this.position.pixelSize * this.height}px`
-    this.$wrapper.style.opacity = this.disabled ? '0.4' : '1'
     this.$canvas.style.opacity = `${this.opacity}%`
-    removeClass(this.element, 'hidden')
+    // A switched-off image takes its topbar with it instead of just dimming
+    if (this.visible) removeClass(this.element, 'hidden')
+    else addClass(this.element, 'hidden')
 
     this.$resetSizeSpan.textContent = `${this.width}x${this.height}`
     this.$brightness.valueAsNumber = this.brightness

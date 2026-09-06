@@ -282,7 +282,7 @@ export class WPlaceBot {
         >()
         for (let index = 0; index < this.images.length; index++) {
           const image = this.images[index]!
-          if (image.disabled) continue
+          if (!image.visible) continue
           tasksLength += image.tasks.length / 2
           if (image.unownedColorStrategy === UnownedColorStrategy.BUY) {
             for (let index = 0; index < image.colors.length; index++) {
@@ -390,7 +390,7 @@ export class WPlaceBot {
                 imageIndex++
               ) {
                 const image = this.images[imageIndex]!
-                if (image.disabled) continue
+                if (!image.visible) continue
                 if (await drawTask(image)) end = false
               }
               if (end) break
@@ -411,7 +411,7 @@ export class WPlaceBot {
                 imageIndex++
               ) {
                 const image = this.images[imageIndex]!
-                if (image.disabled) continue
+                if (!image.visible) continue
                 const percent =
                   1 - image.tasks.length / 2 / (image.width * image.height)
                 if (percent < minPercent) {
@@ -430,7 +430,7 @@ export class WPlaceBot {
               imageIndex++
             ) {
               const image = this.images[imageIndex]!
-              if (image.disabled) continue
+              if (!image.visible) continue
               for (let i = 0; i < image.tasks.length / 2 && charges > 0; i++)
                 await drawTask(image)
             }
@@ -510,8 +510,16 @@ export class WPlaceBot {
         await BotImage.fromJSON(
           this,
           // Opacity stays ours: the site draws its own overlay, so ours is
-          // hidden until the user wants to compare
-          { ...template.data, opacity: 0, url, wplaceId: template.id },
+          // hidden until the user wants to compare. Visibility is the site's,
+          // so it lands in `siteDisabled` and leaves our switch alone
+          {
+            ...template.data,
+            opacity: 0,
+            url,
+            wplaceId: template.id,
+            disabled: false,
+            siteDisabled: template.data.disabled,
+          },
           (p) => {
             progress(index * batchSize + p * batchSize)
           },
