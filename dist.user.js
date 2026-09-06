@@ -340,6 +340,7 @@ var image_default = `<div class="topbar">
     <label color="How to draw">
       Strategy:&nbsp;<select class="strategy">
         <option value="RANDOM">Random</option>
+        <option value="CONTRAST">Maximum contrast</option>
         <option value="DOWN">Top to Bottom</option>
         <option value="UP">Bottom to Top</option>
         <option value="LEFT">Right to Left</option>
@@ -760,6 +761,7 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
     const result = new Uint16Array(SIZE * 2);
     let index = 0;
     switch (strategy) {
+      case "CONTRAST" /* CONTRAST */:
       case "DOWN" /* DOWN */: {
         for (let y = 0;y < height; y++)
           for (let x = 0;x < width; x++) {
@@ -1013,6 +1015,149 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
     }
     return result;
   }
+  function contrastOrder(taskPixels, colorAt, mapAt, width, height, distance) {
+    const SIZE = width * height;
+    const LENGTH = taskPixels.length;
+    const result = new Uint32Array(LENGTH);
+    if (LENGTH === 0)
+      return result;
+    let maxDistance = 0;
+    for (let index = 0;index < distance.length; index++)
+      if (distance[index] > maxDistance)
+        maxDistance = distance[index];
+    const adhesion = maxDistance * 2;
+    const canvas = new Uint8Array(SIZE);
+    canvas.set(mapAt);
+    const painted = new Uint8Array(SIZE);
+    const isTask = new Uint8Array(SIZE);
+    const rank = new Int32Array(SIZE);
+    for (let index = 0;index < LENGTH; index++) {
+      isTask[taskPixels[index]] = 1;
+      rank[taskPixels[index]] = index;
+    }
+    function gain(pixel) {
+      const row = colorAt[pixel] * 64;
+      let score = distance[row + canvas[pixel]];
+      const x = pixel % width;
+      const y = pixel / width | 0;
+      let sum = 0;
+      let neighbours = 0;
+      let done = 0;
+      if (y > 0) {
+        const next = pixel - width;
+        sum += distance[row + canvas[next]];
+        neighbours++;
+        done += painted[next];
+      }
+      if (x > 0) {
+        const next = pixel - 1;
+        sum += distance[row + canvas[next]];
+        neighbours++;
+        done += painted[next];
+      }
+      if (x < width - 1) {
+        const next = pixel + 1;
+        sum += distance[row + canvas[next]];
+        neighbours++;
+        done += painted[next];
+      }
+      if (y < height - 1) {
+        const next = pixel + width;
+        sum += distance[row + canvas[next]];
+        neighbours++;
+        done += painted[next];
+      }
+      if (neighbours !== 0)
+        score += sum / neighbours;
+      return score + adhesion * done / 4;
+    }
+    const current = new Float64Array(SIZE);
+    const capacity = LENGTH * 5 + 8;
+    const heapItem = new Uint32Array(capacity);
+    const heapScore = new Float64Array(capacity);
+    let heapSize = 0;
+    function better(aScore, aItem, bScore, bItem) {
+      return aScore === bScore ? rank[aItem] < rank[bItem] : aScore > bScore;
+    }
+    function push(item, score) {
+      let child = heapSize++;
+      heapItem[child] = item;
+      heapScore[child] = score;
+      while (child > 0) {
+        const parent = child - 1 >> 1;
+        if (!better(heapScore[child], heapItem[child], heapScore[parent], heapItem[parent]))
+          break;
+        const item2 = heapItem[parent];
+        const score2 = heapScore[parent];
+        heapItem[parent] = heapItem[child];
+        heapScore[parent] = heapScore[child];
+        heapItem[child] = item2;
+        heapScore[child] = score2;
+        child = parent;
+      }
+    }
+    function popRoot() {
+      heapSize--;
+      heapItem[0] = heapItem[heapSize];
+      heapScore[0] = heapScore[heapSize];
+      let parent = 0;
+      for (;; ) {
+        const left = parent * 2 + 1;
+        if (left >= heapSize)
+          break;
+        let best = left;
+        const right = left + 1;
+        if (right < heapSize && better(heapScore[right], heapItem[right], heapScore[left], heapItem[left]))
+          best = right;
+        if (!better(heapScore[best], heapItem[best], heapScore[parent], heapItem[parent]))
+          break;
+        const item2 = heapItem[parent];
+        const score2 = heapScore[parent];
+        heapItem[parent] = heapItem[best];
+        heapScore[parent] = heapScore[best];
+        heapItem[best] = item2;
+        heapScore[best] = score2;
+        parent = best;
+      }
+    }
+    for (let index = 0;index < LENGTH; index++) {
+      const pixel = taskPixels[index];
+      const score = gain(pixel);
+      current[pixel] = score;
+      push(pixel, score);
+    }
+    let out = 0;
+    while (out < LENGTH && heapSize > 0) {
+      const pixel = heapItem[0];
+      const score = heapScore[0];
+      popRoot();
+      if (painted[pixel] === 1 || score !== current[pixel])
+        continue;
+      result[out++] = pixel;
+      canvas[pixel] = colorAt[pixel];
+      painted[pixel] = 1;
+      const x = pixel % width;
+      const y = pixel / width | 0;
+      if (y > 0)
+        rescore(pixel - width);
+      if (x > 0)
+        rescore(pixel - 1);
+      if (x < width - 1)
+        rescore(pixel + 1);
+      if (y < height - 1)
+        rescore(pixel + width);
+    }
+    function rescore(pixel) {
+      if (isTask[pixel] === 0 || painted[pixel] === 1)
+        return;
+      const score = gain(pixel);
+      if (score === current[pixel])
+        return;
+      current[pixel] = score;
+      push(pixel, score);
+    }
+    return result;
+  }
 
   // src/world-position.ts
   var WORLD_TILE_SIZE = 1000;
@@ -1181,10 +1326,12 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
     }
     const positions = strategyPosition(strategy, height, width);
     const tasks = [];
+    const contrast = strategy === "CONTRAST" /* CONTRAST */;
     const floodFill = regionOrder !== "OFF" /* OFF */;
-    const reorder = floodFill || outlineFirst;
+    const reorder = contrast || floodFill || outlineFirst;
     const taskPixels = reorder ? new Uint32Array(SIZE) : undefined;
     const taskOf = reorder ? new Int32Array(SIZE) : undefined;
+    const mapAt = contrast ? new Uint8Array(SIZE) : undefined;
     lastProgress = 0;
     for (let index = 0;index < positions.length; index += 2) {
       const progress = index / positions.length * 10 | 0;
@@ -1199,6 +1346,8 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       const gy = globalY + dy;
       const map = mapsCache.get(packTile(toTile(gx), toTile(gy)));
       const mapColor = map[toTilePosition(gy) * 1000 + toTilePosition(gx)];
+      if (contrast)
+        mapAt[dy * width + dx] = mapColor ?? 0;
       if (color === mapColor)
         continue;
       const realColor = realPixels[dy * width + dx];
@@ -1218,8 +1367,12 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       }
     }
     let ordered = tasks;
-    if (floodFill) {
-      const order = floodOrder(taskPixels.subarray(0, tasks.length), pixels2, width, height, regionOrder, fillDirection);
+    if (contrast || floodFill) {
+      let order = taskPixels.subarray(0, tasks.length);
+      if (contrast)
+        order = contrastOrder(order, pixels2, mapAt, width, height, contrastDistances(colorMetric));
+      if (floodFill)
+        order = floodOrder(order, pixels2, width, height, regionOrder, fillDirection);
       ordered = Array.from({ length: order.length });
       for (let index = 0;index < order.length; index++)
         ordered[index] = tasks[taskOf[order[index]]];
@@ -1251,6 +1404,24 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       colorStat,
       pixels: pixels2
     }, [taskPositions.buffer, pixels2.buffer]);
+  }
+  function contrastDistances(colorMetric) {
+    const metricFn = metricFunction(colorMetric);
+    const palette = colorMetric === "compuphase" ? COLORS_RGB_TRIPLES : COLORS;
+    const table = new Float64Array(64 * 64);
+    let max = 0;
+    for (let a = 1;a < 64; a++)
+      for (let b = 1;b < 64; b++) {
+        const delta = metricFn(palette[a], palette[b], 0);
+        table[a * 64 + b] = delta;
+        if (delta > max)
+          max = delta;
+      }
+    for (let index = 1;index < 64; index++) {
+      table[index] = max;
+      table[index * 64] = max;
+    }
+    return table;
   }
   var mapsCache = new Map;
   function readMap(id, x, y, width, height) {

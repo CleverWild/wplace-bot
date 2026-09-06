@@ -9,9 +9,10 @@ import {
 } from './colors'
 import { type PixelColorStat, UnownedColorStrategy } from './image'
 import {
+  contrastOrder,
   type FillDirection,
   floodOrder,
-  type ImageStrategy,
+  ImageStrategy,
   outlineFirstOrder,
   outlineMask,
   RegionOrder,
@@ -209,11 +210,14 @@ function pixels(request: WorkerPixelsRequest) {
   const positions = strategyPosition(strategy, height, width)
   const tasks: { gx: number; gy: number; color: number; realColor: number }[] =
     []
-  // Flood fill and outline both work on pixels, so keep the way back to tasks
+  // Flood fill, contrast and outline all work on pixels, so keep the way back
+  const contrast = strategy === ImageStrategy.CONTRAST
   const floodFill = regionOrder !== RegionOrder.OFF
-  const reorder = floodFill || outlineFirst
+  const reorder = contrast || floodFill || outlineFirst
   const taskPixels = reorder ? new Uint32Array(SIZE) : undefined
   const taskOf = reorder ? new Int32Array(SIZE) : undefined
+  // Neighbours of a task are not always tasks themselves
+  const mapAt = contrast ? new Uint8Array(SIZE) : undefined
   lastProgress = 0
   for (let index = 0; index < positions.length; index += 2) {
     const progress = ((index / positions.length) * 10) | 0
@@ -230,6 +234,7 @@ function pixels(request: WorkerPixelsRequest) {
     const map = mapsCache.get(packTile(toTile(gx), toTile(gy)))!
     const mapColor = map[toTilePosition(gy) * 1000 + toTilePosition(gx)]
 
+    if (contrast) mapAt![dy * width + dx] = mapColor ?? 0
     if (color === mapColor) continue
 
     // Counted even for skipped colors, they are not painted, not done
@@ -252,17 +257,28 @@ function pixels(request: WorkerPixelsRequest) {
   }
 
   // Each pass is a stable reordering, so the last one applied wins ties:
-  // outline phase beats color, which beats blob, which beats the strategy
+  // outline phase beats color, which beats blob, which beats the base order
   let ordered = tasks
-  if (floodFill) {
-    const order = floodOrder(
-      taskPixels!.subarray(0, tasks.length),
-      pixels,
-      width,
-      height,
-      regionOrder,
-      fillDirection,
-    )
+  if (contrast || floodFill) {
+    let order = taskPixels!.subarray(0, tasks.length)
+    if (contrast)
+      order = contrastOrder(
+        order,
+        pixels,
+        mapAt!,
+        width,
+        height,
+        contrastDistances(colorMetric),
+      )
+    if (floodFill)
+      order = floodOrder(
+        order,
+        pixels,
+        width,
+        height,
+        regionOrder,
+        fillDirection,
+      )
     ordered = Array.from({ length: order.length })
     for (let index = 0; index < order.length; index++)
       ordered[index] = tasks[taskOf![order[index]!]!]!
@@ -304,6 +320,30 @@ function pixels(request: WorkerPixelsRequest) {
     } satisfies WorkerPixelsResponse,
     [taskPositions.buffer, pixels.buffer],
   )
+}
+
+/**
+ * Every palette color against every other, by the metric the image is set to.
+ * Blank canvas gets the largest distance in the table: we cannot know what is
+ * under an unpainted tile, and putting the first pixel there is the most
+ * visible thing that can happen.
+ */
+function contrastDistances(colorMetric: ColorMetric) {
+  const metricFn = metricFunction(colorMetric)
+  const palette = colorMetric === 'compuphase' ? COLORS_RGB_TRIPLES : COLORS
+  const table = new Float64Array(64 * 64)
+  let max = 0
+  for (let a = 1; a < 64; a++)
+    for (let b = 1; b < 64; b++) {
+      const delta = metricFn(palette[a]!, palette[b]!, 0)
+      table[a * 64 + b] = delta
+      if (delta > max) max = delta
+    }
+  for (let index = 1; index < 64; index++) {
+    table[index] = max
+    table[index * 64] = max
+  }
+  return table
 }
 
 const mapsCache = new Map<number, Uint8Array>()

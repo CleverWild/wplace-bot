@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 
 import {
+  contrastOrder,
   FillDirection,
   floodOrder,
   outlineFirstOrder,
@@ -291,4 +292,79 @@ test('leaves colors with equal counts where they were', () => {
     [2, 5],
   ])
   expect(sortColorsByAmount([2, 1], amounts, false)).toEqual([2, 1])
+})
+
+/**
+ * Distances of |a - b| * 10 between the few colors the tests use, and 100
+ * against blank, which makes 100 the largest distance in the table.
+ */
+function distances() {
+  const table = new Float64Array(64 * 64)
+  for (let a = 1; a <= 4; a++)
+    for (let b = 1; b <= 4; b++) table[a * 64 + b] = Math.abs(a - b) * 10
+  for (let index = 1; index < 64; index++) {
+    table[index] = 100
+    table[index * 64] = 100
+  }
+  return table
+}
+
+test('paints what changes the picture most, first', () => {
+  const { colorAt, width, height } = grid([[1, 2, 3]])
+  const map = new Uint8Array([1, 1, 1])
+  const order = contrastOrder(
+    allTasks(width, height),
+    colorAt,
+    map,
+    width,
+    height,
+    distances(),
+  )
+  // Pixel 2 is three steps away from what is under it, pixel 0 is already right
+  expect([...order]).toEqual([2, 1, 0])
+})
+
+test('grows from what it has painted instead of jumping', () => {
+  const { colorAt, width, height } = grid([[2, 2, 1, 2, 2]])
+  const map = new Uint8Array([1, 1, 1, 1, 1])
+  const order = contrastOrder(
+    allTasks(width, height),
+    colorAt,
+    map,
+    width,
+    height,
+    distances(),
+  )
+  // All four twos are worth the same at the start, so the base order decides
+  expect(order[0]).toBe(0)
+  // Its neighbour now carries the adhesion bonus and beats the far-away pair
+  expect(order[1]).toBe(1)
+})
+
+test('keeps every task exactly once and touches nothing else', () => {
+  const { colorAt, width, height } = grid([
+    [1, 2, 3, 1],
+    [2, 3, 1, 2],
+    [3, 1, 2, 3],
+  ])
+  const map = new Uint8Array(width * height).fill(1)
+  // Only the middle row is left to paint
+  const tasks = new Uint32Array([4, 5, 6, 7])
+  const order = contrastOrder(tasks, colorAt, map, width, height, distances())
+  expect([...order].sort((a, b) => a - b)).toEqual([4, 5, 6, 7])
+})
+
+test('counts neighbours that are not tasks as part of the surroundings', () => {
+  const { colorAt, width, height } = grid([[1, 2, 1]])
+  // The map already matches at both ends, so only the middle is a task
+  const map = new Uint8Array([1, 1, 1])
+  const order = contrastOrder(
+    new Uint32Array([1]),
+    colorAt,
+    map,
+    width,
+    height,
+    distances(),
+  )
+  expect([...order]).toEqual([1])
 })

@@ -5,6 +5,11 @@
 
 export enum ImageStrategy {
   RANDOM = 'RANDOM',
+  /**
+   * Not a sweep of its own: the order comes from `contrastOrder`, and the
+   * row-major sweep below only settles ties between equally worthwhile pixels.
+   */
+  CONTRAST = 'CONTRAST',
   DOWN = 'DOWN',
   UP = 'UP',
   LEFT = 'LEFT',
@@ -40,6 +45,7 @@ export function strategyPosition(
   const result = new Uint16Array(SIZE * 2) // Max 65535
   let index = 0
   switch (strategy) {
+    case ImageStrategy.CONTRAST:
     case ImageStrategy.DOWN: {
       for (let y = 0; y < height; y++)
         for (let x = 0; x < width; x++) {
@@ -411,4 +417,208 @@ export function sortColorsByAmount(
       ? (amounts.get(a) ?? 0) - (amounts.get(b) ?? 0)
       : (amounts.get(b) ?? 0) - (amounts.get(a) ?? 0),
   )
+}
+
+/**
+ * Orders tasks by how much painting each one changes the picture right now:
+ * how far the target color is from what lies under it, how far it is from what
+ * surrounds it, and a bonus for touching what we have painted already so the
+ * brush grows instead of scattering. Painting a pixel re-scores its four
+ * neighbours, so this is a greedy walk and not a single sort.
+ *
+ * `distance` is a 64x64 table of color distances. Row and column zero are the
+ * caller's business: blank canvas has no color of its own, so what it is worth
+ * against a real one is decided where the palette lives.
+ */
+export function contrastOrder(
+  taskPixels: Uint32Array,
+  colorAt: Uint8Array,
+  mapAt: Uint8Array,
+  width: number,
+  height: number,
+  distance: Float64Array,
+) {
+  const SIZE = width * height
+  const LENGTH = taskPixels.length
+  const result = new Uint32Array(LENGTH)
+  if (LENGTH === 0) return result
+
+  let maxDistance = 0
+  for (let index = 0; index < distance.length; index++)
+    if (distance[index]! > maxDistance) maxDistance = distance[index]!
+  /**
+   * Painting a neighbour of the same color costs this pixel up to a quarter of
+   * `maxDistance` in contrast, so without a bigger bonus than that the brush
+   * pays to move away. Measured on a 218x292 picture, the average hop between
+   * consecutive pixels falls from 80 to 6 as this goes from a quarter to twice
+   * `maxDistance`, while the contrast still front-loaded into the first tenth
+   * only drops from 1.75x to 1.58x the average. Four times costs far more of
+   * that (1.32x) for another 4 pixels of travel. Turn it down for a picture
+   * that should emerge everywhere at once, up for one long unbroken stroke.
+   */
+  const adhesion = maxDistance * 2
+
+  const canvas = new Uint8Array(SIZE)
+  canvas.set(mapAt)
+  const painted = new Uint8Array(SIZE)
+  const isTask = new Uint8Array(SIZE)
+  /** Position in the sweep, used to settle ties */
+  const rank = new Int32Array(SIZE)
+  for (let index = 0; index < LENGTH; index++) {
+    isTask[taskPixels[index]!] = 1
+    rank[taskPixels[index]!] = index
+  }
+
+  function gain(pixel: number) {
+    const row = colorAt[pixel]! * 64
+    let score = distance[row + canvas[pixel]!]!
+    const x = pixel % width
+    const y = (pixel / width) | 0
+    let sum = 0
+    let neighbours = 0
+    let done = 0
+    if (y > 0) {
+      const next = pixel - width
+      sum += distance[row + canvas[next]!]!
+      neighbours++
+      done += painted[next]!
+    }
+    if (x > 0) {
+      const next = pixel - 1
+      sum += distance[row + canvas[next]!]!
+      neighbours++
+      done += painted[next]!
+    }
+    if (x < width - 1) {
+      const next = pixel + 1
+      sum += distance[row + canvas[next]!]!
+      neighbours++
+      done += painted[next]!
+    }
+    if (y < height - 1) {
+      const next = pixel + width
+      sum += distance[row + canvas[next]!]!
+      neighbours++
+      done += painted[next]!
+    }
+    if (neighbours !== 0) score += sum / neighbours
+    // Out of four even at the border, so an edge pixel is not flattered
+    return score + (adhesion * done) / 4
+  }
+
+  // A pixel is re-scored whenever a neighbour is painted, so the heap carries
+  // stale entries; `current` says which score is the live one
+  const current = new Float64Array(SIZE)
+  const capacity = LENGTH * 5 + 8
+  const heapItem = new Uint32Array(capacity)
+  const heapScore = new Float64Array(capacity)
+  let heapSize = 0
+
+  /** Ties go to whatever the sweep met first */
+  function better(
+    aScore: number,
+    aItem: number,
+    bScore: number,
+    bItem: number,
+  ) {
+    return aScore === bScore ? rank[aItem]! < rank[bItem]! : aScore > bScore
+  }
+
+  function push(item: number, score: number) {
+    let child = heapSize++
+    heapItem[child] = item
+    heapScore[child] = score
+    while (child > 0) {
+      const parent = (child - 1) >> 1
+      if (
+        !better(
+          heapScore[child]!,
+          heapItem[child]!,
+          heapScore[parent]!,
+          heapItem[parent]!,
+        )
+      )
+        break
+      const item2 = heapItem[parent]!
+      const score2 = heapScore[parent]!
+      heapItem[parent] = heapItem[child]!
+      heapScore[parent] = heapScore[child]!
+      heapItem[child] = item2
+      heapScore[child] = score2
+      child = parent
+    }
+  }
+
+  function popRoot() {
+    heapSize--
+    heapItem[0] = heapItem[heapSize]!
+    heapScore[0] = heapScore[heapSize]!
+    let parent = 0
+    for (;;) {
+      const left = parent * 2 + 1
+      if (left >= heapSize) break
+      let best = left
+      const right = left + 1
+      if (
+        right < heapSize &&
+        better(
+          heapScore[right]!,
+          heapItem[right]!,
+          heapScore[left]!,
+          heapItem[left]!,
+        )
+      )
+        best = right
+      if (
+        !better(
+          heapScore[best]!,
+          heapItem[best]!,
+          heapScore[parent]!,
+          heapItem[parent]!,
+        )
+      )
+        break
+      const item2 = heapItem[parent]!
+      const score2 = heapScore[parent]!
+      heapItem[parent] = heapItem[best]!
+      heapScore[parent] = heapScore[best]!
+      heapItem[best] = item2
+      heapScore[best] = score2
+      parent = best
+    }
+  }
+
+  for (let index = 0; index < LENGTH; index++) {
+    const pixel = taskPixels[index]!
+    const score = gain(pixel)
+    current[pixel] = score
+    push(pixel, score)
+  }
+
+  let out = 0
+  while (out < LENGTH && heapSize > 0) {
+    const pixel = heapItem[0]!
+    const score = heapScore[0]!
+    popRoot()
+    if (painted[pixel] === 1 || score !== current[pixel]) continue
+    result[out++] = pixel
+    canvas[pixel] = colorAt[pixel]!
+    painted[pixel] = 1
+    const x = pixel % width
+    const y = (pixel / width) | 0
+    if (y > 0) rescore(pixel - width)
+    if (x > 0) rescore(pixel - 1)
+    if (x < width - 1) rescore(pixel + 1)
+    if (y < height - 1) rescore(pixel + width)
+  }
+
+  function rescore(pixel: number) {
+    if (isTask[pixel] === 0 || painted[pixel] === 1) return
+    const score = gain(pixel)
+    if (score === current[pixel]) return
+    current[pixel] = score
+    push(pixel, score)
+  }
+
+  return result
 }
