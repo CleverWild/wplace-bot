@@ -211,72 +211,19 @@ class Base2 {
 }
 
 // src/colors.ts
-var COLORS = [
-  [Number.NaN, Number.NaN, Number.NaN],
-  [0, 0, 0],
-  [0.356, 0, 0],
-  [0.573, 0, 0],
-  [0.864, 0, 0],
-  [1, 0, 0],
-  [0.31, 0.119, 0.037],
-  [0.603, 0.209, 0.107],
-  [0.732, 0.118, 0.137],
-  [0.791, 0.039, 0.16],
-  [0.895, -0.026, 0.168],
-  [0.974, -0.019, 0.077],
-  [0.691, -0.154, 0.075],
-  [0.812, -0.185, 0.096],
-  [0.898, -0.17, 0.149],
-  [0.541, -0.097, 0.005],
-  [0.678, -0.114, -0.018],
-  [0.814, -0.15, 0.011],
-  [0.447, -0.019, -0.134],
-  [0.65, -0.048, -0.137],
-  [0.895, -0.124, -0.027],
-  [0.561, 0.054, -0.229],
-  [0.771, 0, -0.11],
-  [0.431, 0.145, -0.143],
-  [0.557, 0.168, -0.127],
-  [0.796, 0.102, -0.097],
-  [0.551, 0.225, -0.023],
-  [0.62, 0.238, 0],
-  [0.759, 0.127, 0.006],
-  [0.428, 0.036, 0.041],
-  [0.552, 0.03, 0.092],
-  [0.817, 0.055, 0.097],
-  [0.738, 0, 0],
-  [0.46, 0.163, 0.074],
-  [0.735, 0.134, 0.071],
-  [0.642, 0.137, 0.122],
-  [0.794, 0.023, 0.054],
-  [0.62, -0.005, 0.105],
-  [0.747, -0.019, 0.138],
-  [0.864, -0.023, 0.136],
-  [0.489, -0.06, 0.058],
-  [0.609, -0.092, 0.08],
-  [0.76, -0.099, 0.085],
-  [0.54, -0.067, -0.079],
-  [0.941, -0.064, -0.007],
-  [0.803, -0.05, -0.096],
-  [0.438, 0.048, -0.192],
-  [0.421, 0.03, -0.102],
-  [0.593, 0.036, -0.119],
-  [0.781, 0.031, -0.09],
-  [0.757, 0.036, 0.098],
-  [0.676, 0.076, 0.09],
-  [0.868, 0.051, 0.061],
-  [0.524, 0.087, 0.047],
-  [0.684, 0.091, 0.045],
-  [0.835, 0.068, 0.048],
-  [0.519, 0.022, 0.034],
-  [0.629, 0.017, 0.043],
-  [0.342, -0.004, -0.016],
-  [0.564, 0, -0.038],
-  [0.789, 0.003, -0.035],
-  [0.502, -0.006, 0.055],
-  [0.638, -0.005, 0.047],
-  [0.82, -0.007, 0.053]
-];
+function srgbNonlinearTransformInv(c) {
+  return c > 0.04045 ? ((c + 0.055) / 1.055) ** 2.4 : c / 12.92;
+}
+function rgbToLab(r, g, b) {
+  const lr = srgbNonlinearTransformInv(r / 255);
+  const lg = srgbNonlinearTransformInv(g / 255);
+  const lb = srgbNonlinearTransformInv(b / 255);
+  const f = (t) => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+  const fx = f((lr * 0.4124 + lg * 0.3576 + lb * 0.1805) / 0.95047);
+  const fy = f(lr * 0.2126 + lg * 0.7152 + lb * 0.0722);
+  const fz = f((lr * 0.0193 + lg * 0.1192 + lb * 0.9505) / 1.08883);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
 var COLORS_RGB = [
   NaN,
   0,
@@ -343,6 +290,8 @@ var COLORS_RGB = [
   9735275,
   13485470
 ];
+var COLORS_RGB_TRIPLES = COLORS_RGB.map((rgb) => [rgb >> 16, rgb >> 8 & 255, rgb & 255]);
+var COLORS = COLORS_RGB.map((rgb, index) => index === 0 ? [Number.NaN, Number.NaN, Number.NaN] : rgbToLab(rgb >> 16, rgb >> 8 & 255, rgb & 255));
 var COLORS_RGB_MAP = new Map;
 for (let index = 0;index < COLORS_RGB.length; index++)
   COLORS_RGB_MAP.set(COLORS_RGB[index], index);
@@ -382,6 +331,13 @@ var image_default = `<div class="topbar">
     </label>
     <label>Opacity:&nbsp;<input class="opacity" type="range" min="0" max="100"/></label>
     <label>Brightness:&nbsp;<input class="brightness" type="number" step="0.1"/></label>
+    <label title="How colors are matched. Match this to your wplace template">
+      Color metric:&nbsp;<select class="color-metric">
+        <option value="lab" selected>Lab (wplace default)</option>
+        <option value="ciede2000">CIEDE2000</option>
+        <option value="compuphase">Compuphase</option>
+      </select>
+    </label>
     <label color="How to draw">
       Strategy:&nbsp;<select class="strategy">
         <option value="RANDOM">Random</option>
@@ -510,6 +466,7 @@ function migrateImage(old) {
       width,
       height: undefined,
       brightness,
+      colorMetric: "lab",
       position: old.position,
       strategy: "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */,
       opacity: old.opacity,
@@ -584,24 +541,25 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
   function srgbNonlinearTransformInv(c) {
     return c > 0.04045 ? ((c + 0.055) / 1.055) ** 2.4 : c / 12.92;
   }
-  function rgbToOklab(r, g, b) {
+  function rgbToLab(r, g, b) {
     const lr = srgbNonlinearTransformInv(r / 255);
     const lg = srgbNonlinearTransformInv(g / 255);
     const lb = srgbNonlinearTransformInv(b / 255);
-    const lp = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
-    const mp = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
-    const sp = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
-    const l = 0.2104542553 * lp + 0.793617785 * mp - 0.0040720468 * sp;
-    const aa = 1.9779984951 * lp - 2.428592205 * mp + 0.4505937099 * sp;
-    const bb = 0.0259040371 * lp + 0.7827717662 * mp - 0.808675766 * sp;
-    return [l, aa, bb];
+    const f = (t) => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+    const fx = f((lr * 0.4124 + lg * 0.3576 + lb * 0.1805) / 0.95047);
+    const fy = f(lr * 0.2126 + lg * 0.7152 + lb * 0.0722);
+    const fz = f((lr * 0.0193 + lg * 0.1192 + lb * 0.9505) / 1.08883);
+    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
   }
   function deltaE2000(lab1, lab2, brightness) {
     const [L1, a1, b1] = lab1;
     const [L2, a2, b2] = lab2;
     const rad2deg = (rad) => rad * 180 / Math.PI;
     const deg2rad = (deg) => deg * Math.PI / 180;
-    const kL = 1, kC = 1, kH = 1;
+    const hue = (y, x) => y === 0 && x === 0 ? 0 : (rad2deg(Math.atan2(y, x)) + 360) % 360;
+    const kL = 1;
+    const kC = 1;
+    const kH = 1;
     const C1 = Math.sqrt(a1 ** 2 + b1 ** 2);
     const C2 = Math.sqrt(a2 ** 2 + b2 ** 2);
     const avgC = (C1 + C2) / 2;
@@ -610,101 +568,68 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
     const a2p = a2 * (1 + G);
     const C1p = Math.sqrt(a1p ** 2 + b1 ** 2);
     const C2p = Math.sqrt(a2p ** 2 + b2 ** 2);
-    const h1p = b1 === 0 && a1p === 0 ? 0 : rad2deg(Math.atan2(b1, a1p)) % 360;
-    const h2p = b2 === 0 && a2p === 0 ? 0 : rad2deg(Math.atan2(b2, a2p)) % 360;
+    const h1p = hue(b1, a1p);
+    const h2p = hue(b2, a2p);
     const Lp = L2 - L1;
     const Cp = C2p - C1p;
     let hp = 0;
     if (C1p * C2p !== 0) {
       hp = h2p - h1p;
-      if (hp > 180) {
+      if (hp > 180)
         hp -= 360;
-      } else if (hp < -180) {
+      else if (hp < -180)
         hp += 360;
-      }
     }
     const Hp = 2 * Math.sqrt(C1p * C2p) * Math.sin(deg2rad(hp) / 2);
     const avgLp = (L1 + L2) / 2;
     const avgCp = (C1p + C2p) / 2;
-    let avghp = (h1p + h2p) / 2;
-    if (Math.abs(h1p - h2p) > 180) {
-      avghp += 180;
+    let avghp = h1p + h2p;
+    if (C1p * C2p !== 0) {
+      if (Math.abs(h1p - h2p) > 180)
+        avghp += avghp < 360 ? 360 : -360;
+      avghp /= 2;
     }
     const T = 1 - 0.17 * Math.cos(deg2rad(avghp - 30)) + 0.24 * Math.cos(deg2rad(2 * avghp)) + 0.32 * Math.cos(deg2rad(3 * avghp + 6)) - 0.2 * Math.cos(deg2rad(4 * avghp - 63));
     const SL = 1 + 0.015 * (avgLp - 50) ** 2 / Math.sqrt(20 + (avgLp - 50) ** 2);
     const SC = 1 + 0.045 * avgCp;
     const SH = 1 + 0.015 * avgCp * T;
-    const θ = 30 * Math.exp((-((avghp - 275) / 25)) ** 2);
     const RC = 2 * Math.sqrt(avgCp ** 7 / (avgCp ** 7 + 25 ** 7));
-    const RT = -RC * Math.sin(deg2rad(2 * θ));
-    return Math.sqrt((Lp / (kL * SL)) ** 2 + (Cp / (kC * SC)) ** 2 + (Hp / (kH * SH)) ** 2 + RT * (Cp / (kC * SC)) * (Hp / (kH * SH))) - Lp * brightness;
+    const RT = -RC * Math.sin(deg2rad(60 * Math.exp(-(((avghp - 275) / 25) ** 2))));
+    const dL = Lp / (kL * SL);
+    const dC = Cp / (kC * SC);
+    const dH = Hp / (kH * SH);
+    return Math.sqrt(Math.max(0, dL ** 2 + dC ** 2 + dH ** 2 + RT * dC * dH)) - Lp / 100 * brightness;
   }
-  var COLORS = [
-    [Number.NaN, Number.NaN, Number.NaN],
-    [0, 0, 0],
-    [0.356, 0, 0],
-    [0.573, 0, 0],
-    [0.864, 0, 0],
-    [1, 0, 0],
-    [0.31, 0.119, 0.037],
-    [0.603, 0.209, 0.107],
-    [0.732, 0.118, 0.137],
-    [0.791, 0.039, 0.16],
-    [0.895, -0.026, 0.168],
-    [0.974, -0.019, 0.077],
-    [0.691, -0.154, 0.075],
-    [0.812, -0.185, 0.096],
-    [0.898, -0.17, 0.149],
-    [0.541, -0.097, 0.005],
-    [0.678, -0.114, -0.018],
-    [0.814, -0.15, 0.011],
-    [0.447, -0.019, -0.134],
-    [0.65, -0.048, -0.137],
-    [0.895, -0.124, -0.027],
-    [0.561, 0.054, -0.229],
-    [0.771, 0, -0.11],
-    [0.431, 0.145, -0.143],
-    [0.557, 0.168, -0.127],
-    [0.796, 0.102, -0.097],
-    [0.551, 0.225, -0.023],
-    [0.62, 0.238, 0],
-    [0.759, 0.127, 0.006],
-    [0.428, 0.036, 0.041],
-    [0.552, 0.03, 0.092],
-    [0.817, 0.055, 0.097],
-    [0.738, 0, 0],
-    [0.46, 0.163, 0.074],
-    [0.735, 0.134, 0.071],
-    [0.642, 0.137, 0.122],
-    [0.794, 0.023, 0.054],
-    [0.62, -0.005, 0.105],
-    [0.747, -0.019, 0.138],
-    [0.864, -0.023, 0.136],
-    [0.489, -0.06, 0.058],
-    [0.609, -0.092, 0.08],
-    [0.76, -0.099, 0.085],
-    [0.54, -0.067, -0.079],
-    [0.941, -0.064, -0.007],
-    [0.803, -0.05, -0.096],
-    [0.438, 0.048, -0.192],
-    [0.421, 0.03, -0.102],
-    [0.593, 0.036, -0.119],
-    [0.781, 0.031, -0.09],
-    [0.757, 0.036, 0.098],
-    [0.676, 0.076, 0.09],
-    [0.868, 0.051, 0.061],
-    [0.524, 0.087, 0.047],
-    [0.684, 0.091, 0.045],
-    [0.835, 0.068, 0.048],
-    [0.519, 0.022, 0.034],
-    [0.629, 0.017, 0.043],
-    [0.342, -0.004, -0.016],
-    [0.564, 0, -0.038],
-    [0.789, 0.003, -0.035],
-    [0.502, -0.006, 0.055],
-    [0.638, -0.005, 0.047],
-    [0.82, -0.007, 0.053]
-  ];
+  function deltaE94(lab1, lab2, brightness) {
+    const [L1, a1, b1] = lab1;
+    const [L2, a2, b2] = lab2;
+    const dL = L2 - L1;
+    const da = a2 - a1;
+    const db = b2 - b1;
+    const C1 = Math.sqrt(a1 ** 2 + b1 ** 2);
+    const dC = Math.sqrt(a2 ** 2 + b2 ** 2) - C1;
+    const dH = Math.sqrt(Math.max(0, da ** 2 + db ** 2 - dC ** 2));
+    return Math.sqrt(dL ** 2 + (dC / (1 + 0.045 * C1)) ** 2 + (dH / (1 + 0.015 * C1)) ** 2) - dL / 100 * brightness;
+  }
+  function deltaCompuphase(rgb1, rgb2, brightness) {
+    const [r1, g1, b1] = rgb1;
+    const [r2, g2, b2] = rgb2;
+    const avgR = (r1 + r2) / 2;
+    const dr = r1 - r2;
+    const dg = g1 - g2;
+    const db = b1 - b2;
+    return Math.sqrt((2 + avgR / 256) * dr ** 2 + 4 * dg ** 2 + (2 + (255 - avgR) / 256) * db ** 2) - (0.299 * (r2 - r1) + 0.587 * (g2 - g1) + 0.114 * (b2 - b1)) / 255 * brightness;
+  }
+  function metricFunction(metric) {
+    switch (metric) {
+      case "ciede2000":
+        return deltaE2000;
+      case "compuphase":
+        return deltaCompuphase;
+      case "lab":
+        return deltaE94;
+    }
+  }
   var COLORS_RGB = [
     NaN,
     0,
@@ -771,6 +696,8 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
     9735275,
     13485470
   ];
+  var COLORS_RGB_TRIPLES = COLORS_RGB.map((rgb) => [rgb >> 16, rgb >> 8 & 255, rgb & 255]);
+  var COLORS = COLORS_RGB.map((rgb, index) => index === 0 ? [Number.NaN, Number.NaN, Number.NaN] : rgbToLab(rgb >> 16, rgb >> 8 & 255, rgb & 255));
   var COLORS_RGB_MAP = new Map;
   for (let index = 0;index < COLORS_RGB.length; index++)
     COLORS_RGB_MAP.set(COLORS_RGB[index], index);
@@ -826,6 +753,7 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       height,
       unavailableColors,
       brightness,
+      colorMetric,
       colors,
       disabledColors,
       drawColorsInOrder,
@@ -862,6 +790,9 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       }
     }
     const SIZE = width * height;
+    const metricFn = metricFunction(colorMetric);
+    const isRgbMetric = colorMetric === "compuphase";
+    const palette = isRgbMetric ? COLORS_RGB_TRIPLES : COLORS;
     const pixels2 = new Uint8Array(SIZE);
     const isSubstitute = unownedColorStrategy === "SUBSTITUTE" /* SUBSTITUTE */;
     const realPixels = isSubstitute ? new Uint8Array(SIZE) : pixels2;
@@ -892,10 +823,11 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
         else if (colorCache.has(key))
           [min, minReal] = colorCache.get(key);
         else {
+          const source = isRgbMetric ? [r, g, b] : rgbToLab(r, g, b);
           let minDelta = Infinity;
           let minDeltaReal = Infinity;
           for (let colorIndex = 1;colorIndex < 64; colorIndex++) {
-            const delta = deltaE2000(rgbToOklab(r, g, b), COLORS[colorIndex], brightness);
+            const delta = metricFn(source, palette[colorIndex], brightness);
             if (!unavailableColors.has(colorIndex) && delta < minDelta) {
               minDelta = delta;
               min = colorIndex;
@@ -1430,6 +1362,7 @@ class BotImage extends Base2 {
   width;
   heightOverride;
   brightness;
+  colorMetric;
   strategy;
   opacity;
   drawTransparentPixels;
@@ -1449,7 +1382,7 @@ class BotImage extends Base2 {
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(image, 0, 0);
-    const botImage = new BotImage(bot, data.position ? WorldPosition.fromJSON(bot, data.position) : undefined, canvas, data.width, data.height, data.brightness, data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, new Set(data.disabledColors), data.lock, data.disabled, data.name, data.unownedColorStrategy, data.wplaceId);
+    const botImage = new BotImage(bot, data.position ? WorldPosition.fromJSON(bot, data.position) : undefined, canvas, data.width, data.height, data.brightness, data.colorMetric, data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, new Set(data.disabledColors), data.lock, data.disabled, data.name, data.unownedColorStrategy, data.wplaceId);
     await botImage.updatePixels(progress);
     return botImage;
   }
@@ -1484,6 +1417,7 @@ class BotImage extends Base2 {
   $settings;
   $strategy;
   $exportDialog;
+  $colorMetric;
   $topbar;
   $wrapper;
   $name;
@@ -1494,7 +1428,7 @@ class BotImage extends Base2 {
   constructor(bot, position = WorldPosition.fromScreenPosition(bot, {
     x: 256,
     y: 32
-  }), image, width = image.width, heightOverride, brightness = 0, strategy = "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */, opacity = 50, drawTransparentPixels = false, drawColorsInOrder = true, colors = [], disabledColors = new Set, lock = false, disabled = false, name = `${image.width}x${image.height}`, unownedColorStrategy = "BUY" /* BUY */, wplaceId) {
+  }), image, width = image.width, heightOverride, brightness = 0, colorMetric = "lab", strategy = "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */, opacity = 50, drawTransparentPixels = false, drawColorsInOrder = true, colors = [], disabledColors = new Set, lock = false, disabled = false, name = `${image.width}x${image.height}`, unownedColorStrategy = "BUY" /* BUY */, wplaceId) {
     super();
     this.bot = bot;
     this.position = position;
@@ -1502,6 +1436,7 @@ class BotImage extends Base2 {
     this.width = width;
     this.heightOverride = heightOverride;
     this.brightness = brightness;
+    this.colorMetric = colorMetric;
     this.strategy = strategy;
     this.opacity = opacity;
     this.drawTransparentPixels = drawTransparentPixels;
@@ -1535,6 +1470,7 @@ class BotImage extends Base2 {
       $settings: ".form",
       $strategy: ".strategy",
       $exportDialog: ".export-dialog",
+      $colorMetric: ".color-metric",
       $topbar: ".topbar",
       $wrapper: ".wrapper",
       $name: ".name",
@@ -1557,6 +1493,11 @@ class BotImage extends Base2 {
       this.unownedColorStrategy = this.$unownedColorStrategy.value;
       this.updateColors();
       save(this.bot);
+    });
+    this.$colorMetric.addEventListener("change", async () => {
+      this.colorMetric = this.$colorMetric.value;
+      await this.updatePixels();
+      await save(this.bot);
     });
     this.$strategy.addEventListener("change", () => {
       this.strategy = this.$strategy.value;
@@ -1661,6 +1602,7 @@ class BotImage extends Base2 {
       width: this.width,
       height: this.heightOverride,
       brightness: this.brightness,
+      colorMetric: this.colorMetric,
       position: this.position.toJSON(),
       strategy: this.strategy,
       opacity: this.opacity,
@@ -1708,6 +1650,7 @@ class BotImage extends Base2 {
     const result = await workerPixels({
       data: this.imageData,
       brightness: this.brightness,
+      colorMetric: this.colorMetric,
       colors: this.colors,
       disabledColors: this.disabledColors,
       drawColorsInOrder: this.drawColorsInOrder,
@@ -1758,6 +1701,7 @@ class BotImage extends Base2 {
     this.$resetSizeSpan.textContent = `${this.width}x${this.height}`;
     this.$brightness.valueAsNumber = this.brightness;
     this.$strategy.value = this.strategy;
+    this.$colorMetric.value = this.colorMetric;
     this.$opacity.valueAsNumber = this.opacity;
     this.$drawTransparent.checked = this.drawTransparentPixels;
     this.$drawColorsInOrder.checked = this.drawColorsInOrder;
@@ -1801,7 +1745,7 @@ class BotImage extends Base2 {
       const css = (color) => color === 0 ? `repeating-linear-gradient(32deg, #ccc 0 8px, transparent 8px 16px)` : colorToCSS(color);
       const colorStat = this.colorsStat.get(drawColor);
       const $button = document.createElement("button");
-      if (COLORS[drawColor][0] < 0.6)
+      if (COLORS[drawColor][0] < 60)
         addClass($button, "dark");
       $button.title = "Drag to reorder. Click to disable.";
       $button.style.top = `${index * LINE_HEIGHT}px`;

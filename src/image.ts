@@ -6,7 +6,7 @@ import {
 
 import { Base } from './base'
 import { WPlaceBot } from './bot'
-import { COLORS, COLORS_RGB, colorToCSS } from './colors'
+import { type ColorMetric, COLORS, COLORS_RGB, colorToCSS } from './colors'
 // @ts-ignore
 import html from './image.html' with { type: 'text' }
 import {
@@ -90,6 +90,7 @@ export class BotImage extends Base {
       data.width,
       data.height,
       data.brightness,
+      data.colorMetric,
       data.strategy,
       data.opacity,
       data.drawTransparentPixels,
@@ -156,6 +157,7 @@ export class BotImage extends Base {
   protected readonly $settings!: HTMLDivElement
   protected readonly $strategy!: HTMLSelectElement
   protected readonly $exportDialog!: HTMLDialogElement
+  protected readonly $colorMetric!: HTMLSelectElement
   protected readonly $topbar!: HTMLDivElement
   protected readonly $wrapper!: HTMLDivElement
   protected readonly $name!: HTMLInputElement
@@ -179,6 +181,8 @@ export class BotImage extends Base {
     public heightOverride?: number,
     /** Brightness of image */
     public brightness = 0,
+    /** How colors are matched. Defaults to what wplace itself defaults to */
+    public colorMetric: ColorMetric = 'lab',
     /** Order of pixels to draw */
     public strategy = ImageStrategy.SPIRAL_TO_CENTER,
     /** Opacity of overlay */
@@ -233,6 +237,7 @@ export class BotImage extends Base {
       $settings: '.form',
       $strategy: '.strategy',
       $exportDialog: '.export-dialog',
+      $colorMetric: '.color-metric',
       $topbar: '.topbar',
       $wrapper: '.wrapper',
       $name: '.name',
@@ -262,6 +267,13 @@ export class BotImage extends Base {
         .value as UnownedColorStrategy
       this.updateColors()
       void save(this.bot)
+    })
+
+    // Color metric
+    this.$colorMetric.addEventListener('change', async () => {
+      this.colorMetric = this.$colorMetric.value as ColorMetric
+      await this.updatePixels()
+      await save(this.bot)
     })
 
     // Strategy
@@ -407,6 +419,7 @@ export class BotImage extends Base {
       width: this.width,
       height: this.heightOverride,
       brightness: this.brightness,
+      colorMetric: this.colorMetric,
       position: this.position.toJSON(),
       strategy: this.strategy,
       opacity: this.opacity,
@@ -469,6 +482,7 @@ export class BotImage extends Base {
       {
         data: this.imageData,
         brightness: this.brightness,
+        colorMetric: this.colorMetric,
         colors: this.colors,
         disabledColors: this.disabledColors,
         drawColorsInOrder: this.drawColorsInOrder,
@@ -524,6 +538,7 @@ export class BotImage extends Base {
     this.$resetSizeSpan.textContent = `${this.width}x${this.height}`
     this.$brightness.valueAsNumber = this.brightness
     this.$strategy.value = this.strategy
+    this.$colorMetric.value = this.colorMetric
     this.$opacity.valueAsNumber = this.opacity
     this.$drawTransparent.checked = this.drawTransparentPixels
     this.$drawColorsInOrder.checked = this.drawColorsInOrder
@@ -584,7 +599,8 @@ export class BotImage extends Base {
       const colorStat = this.colorsStat.get(drawColor)!
       const $button = document.createElement('button')
       // If dark make text white
-      if (COLORS[drawColor]![0] < 0.6) addClass($button, 'dark')
+      // L* runs 0..100
+      if (COLORS[drawColor]![0] < 60) addClass($button, 'dark')
       $button.title = 'Drag to reorder. Click to disable.'
       $button.style.top = `${index * LINE_HEIGHT}px`
       if (this.disabledColors.has(drawColor)) {
