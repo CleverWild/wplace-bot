@@ -559,6 +559,15 @@ function formatPercent(n) {
     n = n * 100 | 0;
   return n + "%";
 }
+function formatEta(minutes) {
+  const totalMinutes = Math.max(0, Math.floor(minutes));
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor(totalMinutes % (24 * 60) / 60);
+  const remainingMinutes = totalMinutes % 60;
+  if (days > 0)
+    return `${days}d ${hours}h ${remainingMinutes}m`;
+  return `${hours}h ${remainingMinutes}m`;
+}
 
 // src/worker-client.ts
 var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
@@ -1765,7 +1774,7 @@ function etaText(bot, remaining) {
   const charges = Math.floor(bot.me?.charges.count ?? 0);
   const cooldownMs = bot.me?.charges.cooldownMs ?? 30000;
   const minutes = Math.max(0, remaining - charges) * cooldownMs / 60000;
-  return `${minutes / 60 | 0}h ${minutes % 60 | 0}m`;
+  return formatEta(minutes);
 }
 
 class BotImage extends Base2 {
@@ -3373,7 +3382,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
     this.autoDrawInterval = setInterval(async () => {
       const deltaTime = drawTime - Date.now();
       if (deltaTime > 0)
-        this.widget.$autoDraw.innerText = `Auto-Draw in (${deltaTime / 60000 | 0}:${(deltaTime % 60000 / 1000 | 0).toString().padStart(2, "0")})!`;
+        this.widget.$autoDraw.innerText = `Auto-Draw in (${formatEta(Math.ceil(deltaTime / 60000))})!`;
       else {
         drawTime = Date.now() + (this.me?.charges.max ?? 100) * 0.9 * 30000;
         try {

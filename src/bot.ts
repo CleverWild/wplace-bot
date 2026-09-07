@@ -5,6 +5,7 @@ import { obfuscateCSS } from './obfuscator'
 import { DELETE_ALL_DATA, loadSave, save, SAVE_VERSION } from './save'
 // @ts-ignore
 import css from './style.css' with { type: 'text' }
+import { formatEta } from './utils'
 import { BotStrategy, Widget } from './widget'
 import { workerClearMapCache } from './worker-client'
 import {
@@ -465,7 +466,8 @@ export class WPlaceBot {
     this.autoDrawInterval = setInterval(async () => {
       const deltaTime = drawTime - Date.now()
       if (deltaTime > 0)
-        this.widget.$autoDraw.innerText = `Auto-Draw in (${(deltaTime / 60000) | 0}:${(((deltaTime % 60000) / 1000) | 0).toString().padStart(2, '0')})!`
+        // Rounded up, so the countdown never sits on "0h 0m" before it fires
+        this.widget.$autoDraw.innerText = `Auto-Draw in (${formatEta(Math.ceil(deltaTime / 60000))})!`
       else {
         drawTime = Date.now() + (this.me?.charges.max ?? 100) * 0.9 * 30000
         try {
