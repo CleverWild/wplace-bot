@@ -495,6 +495,19 @@ function formatEta(minutes) {
     return `${days}d ${hours}h ${remainingMinutes}m`;
   return `${hours}h ${remainingMinutes}m`;
 }
+function estimateEtaMinutes(remaining, charges, maxCharges, cooldownMs, elapsedMs) {
+  if (cooldownMs <= 0)
+    return 0;
+  const regeneratedCharges = Math.max(0, elapsedMs) / cooldownMs;
+  const availableCharges = Math.min(Math.max(0, maxCharges), Math.max(0, charges) + regeneratedCharges);
+  return Math.max(0, remaining - availableCharges) * cooldownMs / 60000;
+}
+function confirmedTaskPrefix(results) {
+  let index = 0;
+  while (index < results.length && results[index])
+    index++;
+  return index;
+}
 
 // src/worker-client.ts
 var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
@@ -1698,9 +1711,8 @@ function toWplaceFile(image, order = 0) {
 
 // src/image.ts
 function etaText(bot, remaining) {
-  const charges = Math.floor(bot.me?.charges.count ?? 0);
   const cooldownMs = bot.me?.charges.cooldownMs ?? 30000;
-  const minutes = Math.max(0, remaining - charges) * cooldownMs / 60000;
+  const minutes = estimateEtaMinutes(remaining, bot.me?.charges.count ?? 0, bot.me?.charges.max ?? 0, cooldownMs, bot.lastMeAt === undefined ? 0 : Date.now() - bot.lastMeAt);
   return formatEta(minutes);
 }
 
@@ -2123,16 +2135,19 @@ class BotImage extends Base2 {
     else
       removeClass(this.$fillDirectionLabel, "hidden");
     this.$name.value = this.name;
-    const maxTasks = this.width * this.height;
-    const doneTasks = maxTasks - this.tasks.length / 2;
-    const percent = formatPercent(doneTasks / maxTasks);
-    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, this.tasks.length / 2)}`;
-    this.$progressLine.style.transform = `scaleX(${percent})`;
+    this.updateProgress();
     if (this.lock)
       addClass(this.$wrapper, "no-pointer-events");
     else
       removeClass(this.$wrapper, "no-pointer-events");
     this.$lock.textContent = this.lock ? "\uD83D\uDD12" : "\uD83D\uDD13";
+  }
+  updateProgress() {
+    const maxTasks = this.width * this.height;
+    const doneTasks = maxTasks - this.tasks.length / 2;
+    const percent = formatPercent(doneTasks / maxTasks);
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, this.tasks.length / 2)}`;
+    this.$progressLine.style.transform = `scaleX(${percent})`;
   }
   destroy() {
     super.destroy();
@@ -2886,6 +2901,9 @@ class Widget extends Base2 {
     });
     this.$autoDraw.addEventListener("click", () => this.bot.autoDraw());
     this.update();
+    setInterval(() => {
+      this.updateProgress();
+    }, 1000);
     this.open = true;
   }
   addImage() {
@@ -2927,19 +2945,7 @@ class Widget extends Base2 {
   update() {
     this.$title.value = this.bot.title;
     this.$strategy.value = this.bot.strategy;
-    let maxTasks = 0;
-    let totalTasks = 0;
-    for (let index = 0;index < this.bot.images.length; index++) {
-      const image = this.bot.images[index];
-      if (image.disabled)
-        continue;
-      maxTasks += image.width * image.height;
-      totalTasks += image.tasks.length / 2;
-    }
-    const doneTasks = maxTasks - totalTasks;
-    const percent = formatPercent(doneTasks / maxTasks);
-    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, totalTasks)}`;
-    this.$progressLine.style.transform = `scaleX(${percent})`;
+    this.updateProgress();
     this.$images.innerHTML = "";
     for (let index = 0;index < this.bot.images.length; index++) {
       const image = this.bot.images[index];
@@ -2994,6 +3000,25 @@ class Widget extends Base2 {
       });
     }
   }
+  updateProgress() {
+    let maxTasks = 0;
+    let totalTasks = 0;
+    for (let index = 0;index < this.bot.images.length; index++) {
+      const image = this.bot.images[index];
+      if (image.disabled)
+        continue;
+      maxTasks += image.width * image.height;
+      totalTasks += image.tasks.length / 2;
+    }
+    const doneTasks = maxTasks - totalTasks;
+    const percent = formatPercent(doneTasks / maxTasks);
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, totalTasks)}`;
+    this.$progressLine.style.transform = `scaleX(${percent})`;
+    for (let index = 0;index < this.bot.images.length; index++) {
+      const image = this.bot.images[index];
+      image.updateProgress();
+    }
+  }
   setDisabled(name, disabled) {
     querySelector(this.element, "." + name).disabled = disabled;
   }
@@ -3027,6 +3052,7 @@ class WPlaceBot {
   mapsCacheKeys = new Uint32Array(0);
   mapsCache = new Uint8Array(0);
   me;
+  lastMeAt;
   $stars = [];
   strategy = "SEQUENTIAL" /* SEQUENTIAL */;
   images = [];
@@ -3035,6 +3061,7 @@ class WPlaceBot {
   widget = new Widget(this);
   markerPixelPositionResolvers = [];
   lastColor;
+  paintResolvers = [];
   constructor(save2) {
     if (save2) {
       for (let index = 0;index < save2.images.length; index++) {
@@ -3198,15 +3225,17 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         return this.draw();
       }
       const indexes = new Map;
+      const pendingPaints = [];
       const drawTask = async (image) => {
         let index = indexes.get(image);
         if (index === undefined)
           indexes.set(image, index = 0);
         const dIndex = index * 2;
         if (dIndex === image.tasks.length)
-          return false;
-        indexes.set(image, index + 1);
+          return;
         const worldPosition = new WorldPosition(this, image.tasks[dIndex], image.tasks[dIndex + 1]);
+        const confirmation = this.waitForPaint();
+        pendingPaints.push({ image, index, confirmation });
         const color = image.pixels[(worldPosition.globalY - image.position.globalY) * image.width + (worldPosition.globalX - image.position.globalX)];
         if (this.lastColor !== color) {
           document.getElementById("color-" + color).click();
@@ -3236,6 +3265,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
           bubbles: true,
           cancelable: true
         }));
+        indexes.set(image, index + 1);
         charges--;
         progress((initialCharges - charges) / initialCharges);
         await wait(1);
@@ -3286,14 +3316,40 @@ Developer will try to fix your save. Be vary that github issues are public, and 
           }
         }
       }
-      for (const [image, value] of indexes)
-        image.tasks = image.tasks.subarray(value * 2);
+      const paintResults = await Promise.all(pendingPaints.map((paint) => paint.confirmation));
+      const resultsByImage = new Map;
+      for (let index = 0;index < pendingPaints.length; index++) {
+        const paint = pendingPaints[index];
+        let results = resultsByImage.get(paint.image);
+        if (results === undefined) {
+          results = [];
+          resultsByImage.set(paint.image, results);
+        }
+        results[paint.index] = paintResults[index];
+      }
+      for (const [image, results] of resultsByImage)
+        image.tasks = image.tasks.subarray(confirmedTaskPrefix(results) * 2);
       this.widget.update();
     }, () => {
       this.drawing = false;
       globalThis.removeEventListener("mousemove", prevent, true);
       $canvas.removeEventListener("wheel", prevent, true);
       this.widget.setDisabled("draw", false);
+    });
+  }
+  waitForPaint() {
+    return new Promise((resolve) => {
+      const resolver = (painted) => {
+        clearTimeout(timeout);
+        resolve(painted);
+      };
+      const timeout = setTimeout(() => {
+        const index = this.paintResolvers.indexOf(resolver);
+        if (index !== -1)
+          this.paintResolvers.splice(index, 1);
+        resolve(false);
+      }, 1000);
+      this.paintResolvers.push(resolver);
     });
   }
   autoDraw() {
@@ -3537,6 +3593,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
   registerFetchInterceptor() {
     const originalFetch = globalThis.fetch;
     const pixelRegExp = /https:\/\/backend.wplace.live\/s\d+\/pixel\/(-?\d+)\/(-?\d+)\?x=(-?\d+)&y=(-?\d+)/;
+    const paintRegExp = /https:\/\/backend.wplace.live\/s\d+\/pixel\/(-?\d+)\/(-?\d+)$/;
     globalThis.fetch = async (request, options) => {
       const response = await originalFetch(request, options);
       const cloned = response.clone();
@@ -3547,8 +3604,18 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         url = request.url;
       else if (request instanceof URL)
         url = request.href;
+      const method = request instanceof Request ? request.method : options?.method ?? "GET";
+      const paintMatch = paintRegExp.exec(url);
+      if (method.toUpperCase() === "POST" && paintMatch) {
+        const result = await cloned.json().catch(() => {
+          return;
+        });
+        const painted = response.ok && (result?.painted ?? 0) > 0;
+        this.paintResolvers.shift()?.(painted);
+      }
       if (response.url === "https://backend.wplace.live/me") {
         this.me = await cloned.json();
+        this.lastMeAt = Date.now();
         this.me.favoriteLocations.unshift(...FAVORITE_LOCATIONS);
         this.me.maxFavoriteLocations = Infinity;
         response.json = () => Promise.resolve(this.me);

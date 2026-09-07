@@ -100,6 +100,9 @@ export class Widget extends Base {
     this.$autoDraw.addEventListener('click', () => this.bot.autoDraw())
 
     this.update()
+    setInterval(() => {
+      this.updateProgress()
+    }, 1000)
     this.open = true
   }
 
@@ -155,19 +158,7 @@ export class Widget extends Base {
   public update() {
     this.$title.value = this.bot.title
     this.$strategy.value = this.bot.strategy
-    // Progress
-    let maxTasks = 0
-    let totalTasks = 0
-    for (let index = 0; index < this.bot.images.length; index++) {
-      const image = this.bot.images[index]!
-      if (image.disabled) continue
-      maxTasks += image.width * image.height
-      totalTasks += image.tasks.length / 2
-    }
-    const doneTasks = maxTasks - totalTasks
-    const percent = formatPercent(doneTasks / maxTasks)
-    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, totalTasks)}`
-    this.$progressLine.style.transform = `scaleX(${percent})`
+    this.updateProgress()
 
     // Images
     this.$images.innerHTML = ''
@@ -229,6 +220,25 @@ export class Widget extends Base {
         this.update()
         void save(this.bot)
       })
+    }
+  }
+
+  public updateProgress() {
+    let maxTasks = 0
+    let totalTasks = 0
+    for (let index = 0; index < this.bot.images.length; index++) {
+      const image = this.bot.images[index]!
+      if (image.disabled) continue
+      maxTasks += image.width * image.height
+      totalTasks += image.tasks.length / 2
+    }
+    const doneTasks = maxTasks - totalTasks
+    const percent = formatPercent(doneTasks / maxTasks)
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, totalTasks)}`
+    this.$progressLine.style.transform = `scaleX(${percent})`
+    for (let index = 0; index < this.bot.images.length; index++) {
+      const image = this.bot.images[index]!
+      image.updateProgress()
     }
   }
 

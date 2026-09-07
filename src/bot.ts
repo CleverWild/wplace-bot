@@ -5,6 +5,7 @@ import { obfuscateCSS } from './obfuscator'
 import { DELETE_ALL_DATA, loadSave, save, SAVE_VERSION } from './save'
 // @ts-ignore
 import css from './style.css' with { type: 'text' }
+import { confirmedTaskPrefix } from './utils'
 import { BotStrategy, Widget } from './widget'
 import { workerClearMapCache } from './worker-client'
 import {
@@ -73,6 +74,9 @@ export class WPlaceBot {
   /** Data about account */
   public me?: Me
 
+  /** Timestamp of the last successful /me response */
+  public lastMeAt?: number
+
   /** Cached stars elements */
   public $stars: HTMLDivElement[] = []
 
@@ -97,6 +101,8 @@ export class WPlaceBot {
 
   /** Last color drawn */
   protected lastColor?: number
+
+  protected paintResolvers: ((painted: boolean) => void)[] = []
 
   public constructor(save?: Awaited<ReturnType<WPlaceBot['toJSON']>>) {
     // Preinit save data before page has loaded
@@ -320,18 +326,24 @@ export class WPlaceBot {
           return this.draw()
         }
         const indexes = new Map<BotImage, number>()
+        const pendingPaints: {
+          image: BotImage
+          index: number
+          confirmation: Promise<boolean>
+        }[] = []
 
         const drawTask = async (image: BotImage) => {
           let index = indexes.get(image)
           if (index === undefined) indexes.set(image, (index = 0))
           const dIndex = index * 2
-          if (dIndex === image.tasks.length) return false
-          indexes.set(image, index + 1)
+          if (dIndex === image.tasks.length) return undefined
           const worldPosition = new WorldPosition(
             this,
             image.tasks[dIndex]!,
             image.tasks[dIndex + 1]!,
           )
+          const confirmation = this.waitForPaint()
+          pendingPaints.push({ image, index, confirmation })
           const color =
             image.pixels[
               (worldPosition.globalY - image.position.globalY) * image.width +
@@ -374,6 +386,7 @@ export class WPlaceBot {
               cancelable: true,
             }),
           )
+          indexes.set(image, index + 1)
           charges--
           progress((initialCharges - charges) / initialCharges)
           await wait(1)
@@ -437,9 +450,21 @@ export class WPlaceBot {
           }
         }
 
-        // Trim tasks from already done
-        for (const [image, value] of indexes)
-          image.tasks = image.tasks.subarray(value * 2)
+        const paintResults = await Promise.all(
+          pendingPaints.map((paint) => paint.confirmation),
+        )
+        const resultsByImage = new Map<BotImage, boolean[]>()
+        for (let index = 0; index < pendingPaints.length; index++) {
+          const paint = pendingPaints[index]!
+          let results = resultsByImage.get(paint.image)
+          if (results === undefined) {
+            results = []
+            resultsByImage.set(paint.image, results)
+          }
+          results[paint.index] = paintResults[index]!
+        }
+        for (const [image, results] of resultsByImage)
+          image.tasks = image.tasks.subarray(confirmedTaskPrefix(results) * 2)
 
         this.widget.update()
       },
@@ -450,6 +475,21 @@ export class WPlaceBot {
         this.widget.setDisabled('draw', false)
       },
     )
+  }
+
+  public waitForPaint(): Promise<boolean> {
+    return new Promise((resolve) => {
+      const resolver = (painted: boolean) => {
+        clearTimeout(timeout)
+        resolve(painted)
+      }
+      const timeout = setTimeout(() => {
+        const index = this.paintResolvers.indexOf(resolver)
+        if (index !== -1) this.paintResolvers.splice(index, 1)
+        resolve(false)
+      }, 1000)
+      this.paintResolvers.push(resolver)
+    })
   }
 
   public autoDraw() {
@@ -774,6 +814,8 @@ export class WPlaceBot {
     const originalFetch = globalThis.fetch
     const pixelRegExp =
       /https:\/\/backend.wplace.live\/s\d+\/pixel\/(-?\d+)\/(-?\d+)\?x=(-?\d+)&y=(-?\d+)/
+    const paintRegExp =
+      /https:\/\/backend.wplace.live\/s\d+\/pixel\/(-?\d+)\/(-?\d+)$/
     // @ts-ignore
     globalThis.fetch = async (request, options) => {
       const response = await originalFetch(request, options)
@@ -782,8 +824,18 @@ export class WPlaceBot {
       if (typeof request == 'string') url = request
       else if (request instanceof Request) url = request.url
       else if (request instanceof URL) url = request.href
+      const method =
+        request instanceof Request ? request.method : (options?.method ?? 'GET')
+      const paintMatch = paintRegExp.exec(url)
+      if (method.toUpperCase() === 'POST' && paintMatch) {
+        const result = (await cloned.json().catch(() => undefined)) as
+          { painted?: number } | undefined
+        const painted = response.ok && (result?.painted ?? 0) > 0
+        this.paintResolvers.shift()?.(painted)
+      }
       if (response.url === 'https://backend.wplace.live/me') {
         this.me = (await cloned.json()) as Me
+        this.lastMeAt = Date.now()
         this.me.favoriteLocations.unshift(...FAVORITE_LOCATIONS)
         this.me.maxFavoriteLocations = Infinity
         response.json = () => Promise.resolve(this.me)
