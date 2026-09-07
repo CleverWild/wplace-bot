@@ -25,7 +25,7 @@ import {
   sortColorsByAmount,
 } from './ordering'
 import { save, SAVE_VERSION } from './save'
-import { formatPercent } from './utils'
+import { formatEta, formatPercent } from './utils'
 import { workerPixels } from './worker-client'
 import { WorldPosition } from './world-position'
 import { type SiteTemplateData, toWplaceFile } from './wplace-file'
@@ -58,7 +58,7 @@ export function etaText(bot: WPlaceBot, remaining: number): string {
   const charges = Math.floor(bot.me?.charges.count ?? 0)
   const cooldownMs = bot.me?.charges.cooldownMs ?? 30000 // default 30 seconds
   const minutes = (Math.max(0, remaining - charges) * cooldownMs) / 60000
-  return `${(minutes / 60) | 0}h ${(minutes % 60) | 0}m`
+  return formatEta(minutes)
 }
 
 export class BotImage extends Base {

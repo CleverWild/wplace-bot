@@ -4,3 +4,12 @@ export function formatPercent(n: number) {
   else n = (n * 100) | 0
   return n + '%'
 }
+
+export function formatEta(minutes: number) {
+  const totalMinutes = Math.max(0, Math.floor(minutes))
+  const days = Math.floor(totalMinutes / (24 * 60))
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60)
+  const remainingMinutes = totalMinutes % 60
+  if (days > 0) return `${days}d ${hours}h ${remainingMinutes}m`
+  return `${hours}h ${remainingMinutes}m`
+}
