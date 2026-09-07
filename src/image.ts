@@ -25,7 +25,7 @@ import {
   sortColorsByAmount,
 } from './ordering'
 import { save, SAVE_VERSION } from './save'
-import { formatEta, formatPercent } from './utils'
+import { estimateEtaMinutes, formatEta, formatPercent } from './utils'
 import { workerPixels } from './worker-client'
 import { WorldPosition } from './world-position'
 import { type SiteTemplateData, toWplaceFile } from './wplace-file'
@@ -53,11 +53,16 @@ export enum UnownedColorStrategy {
   SUBSTITUTE = 'SUBSTITUTE',
 }
 
-/** Time left to paint `remaining` pixels, counting the charges already stored */
+/** Time left to paint `remaining` pixels, counting stored and regenerated charges */
 export function etaText(bot: WPlaceBot, remaining: number): string {
-  const charges = Math.floor(bot.me?.charges.count ?? 0)
-  const cooldownMs = bot.me?.charges.cooldownMs ?? 30000 // default 30 seconds
-  const minutes = (Math.max(0, remaining - charges) * cooldownMs) / 60000
+  const cooldownMs = bot.me?.charges.cooldownMs ?? 30000
+  const minutes = estimateEtaMinutes(
+    remaining,
+    bot.me?.charges.count ?? 0,
+    bot.me?.charges.max ?? 0,
+    cooldownMs,
+    bot.lastMeAt === undefined ? 0 : Date.now() - bot.lastMeAt,
+  )
   return formatEta(minutes)
 }
 
@@ -623,14 +628,18 @@ export class BotImage extends Base {
       addClass(this.$fillDirectionLabel, 'hidden')
     else removeClass(this.$fillDirectionLabel, 'hidden')
     this.$name.value = this.name
+    this.updateProgress()
+    if (this.lock) addClass(this.$wrapper, 'no-pointer-events')
+    else removeClass(this.$wrapper, 'no-pointer-events')
+    this.$lock.textContent = this.lock ? '🔒' : '🔓'
+  }
+
+  public updateProgress() {
     const maxTasks = this.width * this.height
     const doneTasks = maxTasks - this.tasks.length / 2
     const percent = formatPercent(doneTasks / maxTasks)
     this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, this.tasks.length / 2)}`
     this.$progressLine.style.transform = `scaleX(${percent})`
-    if (this.lock) addClass(this.$wrapper, 'no-pointer-events')
-    else removeClass(this.$wrapper, 'no-pointer-events')
-    this.$lock.textContent = this.lock ? '🔒' : '🔓'
   }
 
   /** Removes image */

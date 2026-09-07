@@ -13,3 +13,29 @@ export function formatEta(minutes: number) {
   if (days > 0) return `${days}d ${hours}h ${remainingMinutes}m`
   return `${hours}h ${remainingMinutes}m`
 }
+
+export function estimateEtaMinutes(
+  remaining: number,
+  charges: number,
+  maxCharges: number,
+  cooldownMs: number,
+  elapsedMs: number,
+) {
+  if (cooldownMs <= 0) return 0
+  const regeneratedCharges = Math.max(0, elapsedMs) / cooldownMs
+  const availableCharges = Math.min(
+    Math.max(0, maxCharges),
+    Math.max(0, charges) + regeneratedCharges,
+  )
+  return (Math.max(0, remaining - availableCharges) * cooldownMs) / 60000
+}
+
+export function nextTaskIndex(index: number, painted: boolean) {
+  return painted ? index + 1 : index
+}
+
+export function confirmedTaskPrefix(results: readonly boolean[]) {
+  let index = 0
+  while (index < results.length && results[index]) index++
+  return index
+}
