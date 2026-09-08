@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 
 import {
+  CHARGES_PER_PACK_WITH_PAYBACK,
   confirmedTaskPrefix,
   estimateEtaMinutes,
   formatEta,
@@ -37,4 +38,30 @@ test('shows days and remaining hours when ETA reaches a day', () => {
 
 test('shows one day at exactly 24 hours', () => {
   expect(formatEta(24 * 60)).toBe('1d 0h 0m')
+})
+
+test('leaves the estimate alone when droplets are not spent on charges', () => {
+  expect(estimateEtaMinutes(100, 0, 100, 30_000, 0)).toBe(50)
+})
+
+test('turns the droplet balance into charges already bought', () => {
+  // 1000 droplets buy two packs of 30, and 100 pixels pay 6 of themselves back
+  expect(estimateEtaMinutes(100, 0, 100, 30_000, 0, 1000)).toBe(17)
+})
+
+test('shortens the estimate by what painting pays back', () => {
+  expect(estimateEtaMinutes(100, 0, 100, 30_000, 0, 0)).toBe(47)
+})
+
+test('a pack covers more pixels than its charges, thanks to the payback', () => {
+  expect(CHARGES_PER_PACK_WITH_PAYBACK).toBeCloseTo(31.915, 3)
+})
+
+test('spends droplets on missing colors before charges', () => {
+  // 2600 in the bank plus 100 earned, less 2000 for the color, is 42 charges
+  expect(estimateEtaMinutes(100, 0, 100, 30_000, 0, 2600, 1)).toBe(29)
+})
+
+test('leaves nothing for charges when colors eat the whole balance', () => {
+  expect(estimateEtaMinutes(100, 0, 100, 30_000, 0, 2600, 2)).toBe(50)
 })

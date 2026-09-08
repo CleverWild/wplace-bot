@@ -25,6 +25,18 @@ export enum BotStrategy {
   SEQUENTIAL = 'SEQUENTIAL',
 }
 
+/**
+ * What the one droplet balance is spent on. There is no "charges only": an
+ * image that should not eat the balance on colors says so itself, through its
+ * own `UnownedColorStrategy`
+ */
+export enum DropletStrategy {
+  /** Colors only, as wplace-bot always did. Charges are never bought */
+  COLORS = 'COLORS',
+  /** Save up for a needed color first, buy charges the rest of the time */
+  COLORS_FIRST = 'COLORS_FIRST',
+}
+
 /** Widget UI with buttons */
 export class Widget extends Base {
   public readonly element = document.createElement('div')
@@ -53,6 +65,7 @@ export class Widget extends Base {
   protected readonly $draw!: HTMLButtonElement
   protected readonly $addImage!: HTMLButtonElement
   protected readonly $strategy!: HTMLInputElement
+  protected readonly $dropletStrategy!: HTMLSelectElement
   protected readonly $progressLine!: HTMLDivElement
   protected readonly $progressText!: HTMLSpanElement
   protected readonly $images!: HTMLDivElement
@@ -77,6 +90,7 @@ export class Widget extends Base {
       $draw: '.draw',
       $addImage: '.add-image',
       $strategy: '.strategy',
+      $dropletStrategy: '.droplet-strategy',
       $progressLine: '.progress div',
       $progressText: '.progress span',
       $images: '.images',
@@ -96,6 +110,12 @@ export class Widget extends Base {
     this.$addImage.addEventListener('click', () => this.addImage())
     this.$strategy.addEventListener('change', () => {
       this.bot.strategy = this.$strategy.value as BotStrategy
+    })
+    this.$dropletStrategy.addEventListener('change', () => {
+      this.bot.dropletStrategy = this.$dropletStrategy.value as DropletStrategy
+      // The ETA formula follows the choice, so redraw it now instead of in a second
+      this.updateProgress()
+      void save(this.bot)
     })
     this.$autoDraw.addEventListener('click', () => this.bot.autoDraw())
 
@@ -158,6 +178,7 @@ export class Widget extends Base {
   public update() {
     this.$title.value = this.bot.title
     this.$strategy.value = this.bot.strategy
+    this.$dropletStrategy.value = this.bot.dropletStrategy
     this.updateProgress()
 
     // Images

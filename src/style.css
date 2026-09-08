@@ -230,6 +230,12 @@ dialog.export-dialog::backdrop {
   transition: background-color 0.2s;
 }
 
+/* A select is sized by its widest option, and min-width: auto would let it
+   push the label it sits next to out of the panel */
+.form select {
+  min-width: 0;
+}
+
 .form input[type='range'] {
   appearance: none;
   width: 100%;

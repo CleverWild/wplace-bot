@@ -5,8 +5,16 @@ import { obfuscateCSS } from './obfuscator'
 import { DELETE_ALL_DATA, loadSave, save, SAVE_VERSION } from './save'
 // @ts-ignore
 import css from './style.css' with { type: 'text' }
-import { confirmedTaskPrefix, formatEta } from './utils'
-import { BotStrategy, Widget } from './widget'
+import {
+  CHARGES_PER_PACK,
+  CHARGES_PER_PACK_WITH_PAYBACK,
+  confirmedTaskPrefix,
+  formatEta,
+  DROPLETS_PER_COLOR,
+  DROPLETS_PER_PACK,
+  DROPLETS_PER_PIXEL,
+} from './utils'
+import { BotStrategy, DropletStrategy, Widget } from './widget'
 import { workerClearMapCache } from './worker-client'
 import {
   addFavoriteLocation,
@@ -83,6 +91,14 @@ export class WPlaceBot {
   /** Strategy how to distribute draw calls between images */
   public strategy = BotStrategy.SEQUENTIAL
 
+  /** What the droplet balance is spent on */
+  public dropletStrategy = DropletStrategy.COLORS_FIRST
+
+  /** Whether droplets go into paint charges, and so pay part of the ETA back */
+  public get spendsOnCharges() {
+    return this.dropletStrategy !== DropletStrategy.COLORS
+  }
+
   /** Images on canvas */
   public images: BotImage[] = []
 
@@ -120,6 +136,7 @@ export class WPlaceBot {
       }
 
       this.strategy = save.strategy
+      this.dropletStrategy = save.dropletStrategy
       this.title = save.title
     } else {
       this.title = 'WPlace-bot'
@@ -234,8 +251,15 @@ export class WPlaceBot {
       })
   }
 
-  /** Start drawing */
-  public draw(): Promise<void> {
+  /*
+   * Paints every visible image until charges run out.
+   *
+   * Buying charges restarts the run so the new balance is read from `/me`, and
+   * `dropletsBeforePurchase` is what stops that going round forever: a purchase
+   * that did not actually take the money leaves the balance where it was, and
+   * that is the failure the loop ends on.
+   */
+  public draw(dropletsBeforePurchase = Infinity): Promise<void> {
     this.widget.setDisabled('draw', true)
     this.widget.status = ''
     // Clear maps cache to refetch pixels
@@ -282,36 +306,16 @@ export class WPlaceBot {
 
         // Calculate tasks and colors to buy
         let tasksLength = 0
-        const colorsToBuyMap = new Map<
-          number,
-          { color: number; amount: number }
-        >()
         for (let index = 0; index < this.images.length; index++) {
           const image = this.images[index]!
           if (!image.visible) continue
           tasksLength += image.tasks.length / 2
-          if (image.unownedColorStrategy === UnownedColorStrategy.BUY) {
-            for (let index = 0; index < image.colors.length; index++) {
-              const color = image.colors[index]!
-              if (
-                image.disabledColors.has(color) ||
-                !this.unavailableColors.has(color)
-              )
-                continue
-              const amount = image.colorsStat.get(color)!.amount
-              if (!colorsToBuyMap.has(color))
-                colorsToBuyMap.set(color, {
-                  color: color,
-                  amount,
-                })
-              else colorsToBuyMap.get(color)!.amount += amount
-            }
-          }
         }
-        const colorToBuy = [...colorsToBuyMap.values()].sort(
-          (a, b) => b.amount - a.amount,
-        )[0]?.color
-        if (this.me!.droplets >= 2000 && colorToBuy !== undefined) {
+        const colorToBuy = this.colorsToBuy()[0]
+        if (
+          this.me!.droplets >= DROPLETS_PER_COLOR &&
+          colorToBuy !== undefined
+        ) {
           document.getElementById('color-' + colorToBuy)?.click()
           await wait(500)
           document
@@ -324,6 +328,28 @@ export class WPlaceBot {
           await wait(500)
           // Retry after color bought
           return this.draw()
+        }
+        // Charges are only worth buying once the colors this run needs are paid for
+        const wantsCharges =
+          this.dropletStrategy === DropletStrategy.COLORS_FIRST &&
+          colorToBuy === undefined
+        // A balance that did not drop means the last purchase never happened
+        if (wantsCharges && this.me!.droplets < dropletsBeforePurchase) {
+          const packs = Math.min(
+            // Each pack pays for part of the next one, so fewer are needed
+            Math.ceil(
+              (tasksLength - initialCharges) / CHARGES_PER_PACK_WITH_PAYBACK,
+            ),
+            Math.floor(this.me!.droplets / DROPLETS_PER_PACK),
+            // Charges over the account maximum are bought for nothing
+            Math.floor(
+              (this.me!.charges.max - initialCharges) / CHARGES_PER_PACK,
+            ),
+          )
+          // Retry after charges bought, so /me reports the new balance
+          const droplets = this.me!.droplets
+          if (packs > 0 && (await this.buyChargePacks(packs)))
+            return this.draw(droplets)
         }
         const indexes = new Map<BotImage, number>()
         const pendingPaints: {
@@ -467,6 +493,27 @@ export class WPlaceBot {
           image.tasks = image.tasks.subarray(confirmedTaskPrefix(results) * 2)
 
         this.widget.update()
+
+        // Painting moves both counters and nothing re-reads /me until the next
+        // run, so keep our copy honest: the ETA and the wake-up time are read
+        // from it, and a stale balance hides droplets the run just earned
+        const painted = paintResults.filter((confirmed) => confirmed).length
+        this.me!.charges.count = Math.max(0, this.me!.charges.count - painted)
+        this.me!.droplets += painted * DROPLETS_PER_PIXEL
+        this.lastMeAt = Date.now()
+
+        // The bar is empty now, so the account maximum no longer caps a
+        // purchase. Without this the droplets would sit unspent until the next
+        // Auto-Draw, which deliberately wakes up with the bar almost full.
+        // Painting something is the condition that keeps this from spinning:
+        // a run that paints nothing cannot pay for the next one
+        if (
+          wantsCharges &&
+          painted > 0 &&
+          this.me!.droplets >= DROPLETS_PER_PACK &&
+          this.images.some((image) => image.visible && image.tasks.length > 0)
+        )
+          return this.draw()
       },
       () => {
         this.drawing = false
@@ -492,6 +539,35 @@ export class WPlaceBot {
     })
   }
 
+  /**
+   * How long Auto-Draw should wait before the next run.
+   *
+   * Waiting for a full bar wastes nothing, but waiting past what the remaining
+   * tasks need wastes a whole cycle, and arriving with the bar already full
+   * leaves no room under the account maximum for a purchase. So aim at exactly
+   * the charges the next run will spend, less the ones droplets can cover.
+   */
+  protected msUntilNextDraw(): number {
+    const cooldownMs = this.me?.charges.cooldownMs ?? 30000
+    const maxCharges = this.me?.charges.max ?? 100
+    let tasks = 0
+    for (let index = 0; index < this.images.length; index++) {
+      const image = this.images[index]!
+      if (image.visible) tasks += image.tasks.length / 2
+    }
+    // Nothing left to paint: look again once the bar has filled anyway
+    if (tasks === 0) return maxCharges * cooldownMs
+    const buysCharges = this.spendsOnCharges && this.colorsToBuy().length === 0
+    const bought = buysCharges
+      ? Math.floor((this.me?.droplets ?? 0) / DROPLETS_PER_PACK) *
+        CHARGES_PER_PACK
+      : 0
+    const missing =
+      Math.min(tasks, maxCharges) - (this.me?.charges.count ?? 0) - bought
+    // Never come back in a tight loop, even when the numbers say "now"
+    return Math.max(1, missing) * cooldownMs
+  }
+
   public autoDraw() {
     if (this.autoDrawInterval) {
       this.widget.$autoDraw.innerText = 'Auto-Draw'
@@ -503,25 +579,32 @@ export class WPlaceBot {
     let errorCount = 0
     let drawTime = 0
     this.autoDrawInterval = setInterval(async () => {
+      // The tick keeps coming every second while a run is still going
+      if (this.drawing) {
+        this.widget.$autoDraw.innerText = 'Auto-Draw is drawing...'
+        return
+      }
       const deltaTime = drawTime - Date.now()
-      if (deltaTime > 0)
+      if (deltaTime > 0) {
         // Rounded up, so the countdown never sits on "0h 0m" before it fires
         this.widget.$autoDraw.innerText = `Auto-Draw in (${formatEta(Math.ceil(deltaTime / 60000))})!`
-      else {
-        drawTime = Date.now() + (this.me?.charges.max ?? 100) * 0.9 * 30000
-        try {
-          await this.draw()
-          // Click draw
-          document
-            .querySelector<HTMLButtonElement>(
-              '.absolute.bottom-0  .btn.btn-lg.relative.btn-primary',
-            )
-            ?.click()
-          errorCount = 0
-        } catch {
-          errorCount++
-          if (errorCount === 4) throw new Error('Error')
-        }
+        return
+      }
+      try {
+        await this.draw()
+        // Click draw
+        document
+          .querySelector<HTMLButtonElement>(
+            '.absolute.bottom-0  .btn.btn-lg.relative.btn-primary',
+          )
+          ?.click()
+        errorCount = 0
+      } catch {
+        errorCount++
+        if (errorCount === 4) throw new Error('Error')
+      } finally {
+        // One place owns the schedule, whether the run worked out or not
+        drawTime = Date.now() + this.msUntilNextDraw()
       }
     }, 1000)
     return true
@@ -533,6 +616,7 @@ export class WPlaceBot {
       version: SAVE_VERSION,
       images: await Promise.all(this.images.map((x) => x.toJSON())),
       strategy: this.strategy,
+      dropletStrategy: this.dropletStrategy,
       title: this.title,
     }
   }
@@ -631,6 +715,37 @@ export class WPlaceBot {
     }
   }
 
+  /**
+   * Colors the visible images want but the account does not own, most wanted
+   * first. Only images set to buy them count
+   */
+  public colorsToBuy(): number[] {
+    const amounts = new Map<number, number>()
+    for (let index = 0; index < this.images.length; index++) {
+      const image = this.images[index]!
+      if (
+        !image.visible ||
+        image.unownedColorStrategy !== UnownedColorStrategy.BUY
+      )
+        continue
+      for (let i = 0; i < image.colors.length; i++) {
+        const color = image.colors[i]!
+        if (
+          image.disabledColors.has(color) ||
+          !this.unavailableColors.has(color)
+        )
+          continue
+        amounts.set(
+          color,
+          (amounts.get(color) ?? 0) + image.colorsStat.get(color)!.amount,
+        )
+      }
+    }
+    return [...amounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([color]) => color)
+  }
+
   /** Read colors */
   public async updateColorsData() {
     await this.openColors()
@@ -642,6 +757,66 @@ export class WPlaceBot {
         this.unavailableColors.add(
           Math.abs(Number.parseInt($button.id.slice(6))),
         )
+  }
+
+  /**
+   * Buys up to `packs` packs of paint charges, returns whether the order went
+   * through.
+   *
+   * The store is wplace's own UI, so this is the usual pile of hardcoded
+   * handles. The card is found by its wording rather than its classes, because
+   * the wording churns less; if buying quietly stops working, check
+   * STORE_BUTTON and PACK_LABEL against the live page first.
+   */
+  public async buyChargePacks(packs: number): Promise<boolean> {
+    const STORE_BUTTON = 'button[title="Store"]'
+    const PACK_LABEL = '+30 Paint Charges'
+    await this.closeAll()
+    const $store = document.querySelector<HTMLButtonElement>(STORE_BUTTON)
+    if (!$store) {
+      console.warn(`wbot: no ${STORE_BUTTON} on the page, charges not bought`)
+      return false
+    }
+    $store.click()
+
+    // Bounded wait: a store that never opens must not hang the whole draw.
+    // The card is looked up in the document, not in a container, because the
+    // store is a plain section rather than the modal colors are bought from
+    let $card: HTMLElement | null = null
+    for (let attempt = 0; attempt < 10 && !$card; attempt++) {
+      await wait(200)
+      $card =
+        [...document.querySelectorAll('p')].find(
+          (p) => p.textContent.trim() === PACK_LABEL,
+        )?.parentElement ?? null
+    }
+    if (!$card) {
+      console.warn(`wbot: no "${PACK_LABEL}" card in the store`)
+      await this.closeAll()
+      return false
+    }
+
+    // wplace caps the counter at what the balance can afford
+    const $amount = $card.querySelector<HTMLInputElement>(
+      'input[type="number"]',
+    )
+    if ($amount) {
+      $amount.value = Math.min(packs, Number($amount.max) || 1).toString()
+      // Svelte reads the value off the event, not off the property
+      $amount.dispatchEvent(new Event('input', { bubbles: true }))
+      await wait(100)
+    }
+    const $buy = $card.querySelector<HTMLButtonElement>('button.btn-primary')
+    if (!$buy || $buy.disabled) {
+      console.warn('wbot: the charges card has no buy button to click')
+      await this.closeAll()
+      return false
+    }
+    $buy.click()
+    await wait(1000)
+    await this.closeAll()
+    await wait(500)
+    return true
   }
 
   /** Move map */

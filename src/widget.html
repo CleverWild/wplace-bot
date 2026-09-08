@@ -1,15 +1,25 @@
-<button class="open-button"><div>></div></button>
+<button class="open-button">
+  <div>></div>
+</button>
 <input class="title" type="text">
 <div class="form">
-  <div class="progress"><div></div><span></span></div>
+  <div class="progress">
+    <div></div><span></span>
+  </div>
   <div class="p status"></div>
   <button class="draw" disabled>Draw</button>
   <button class="auto-draw" disabled>Auto-Draw</button>
   <label>Strategy:&nbsp;<select class="strategy">
-    <option value="SEQUENTIAL" selected>Sequential</option>
-    <option value="ALL">All</option>
-    <option value="PERCENTAGE">Percentage</option>
-  </select></label>
+      <option value="SEQUENTIAL" selected>Sequential</option>
+      <option value="ALL">All</option>
+      <option value="PERCENTAGE">Percentage</option>
+    </select></label>
+  <label
+    title="Painted pixels earn droplets. 500 droplets buy 30 charges, 2000 buy a color. To keep the balance off colors entirely, set an image's Unowned Colors to Skip or Substitute">Droplets:&nbsp;<select
+      class="droplet-strategy">
+      <option value="COLORS" selected>Colors only</option>
+      <option value="COLORS_FIRST">Colors first</option>
+    </select></label>
   <button class="add-image" disabled>Add image</button>
   <!-- <button class="pumpkin-hunt" disabled>Pumpkin Hunt!</button> -->
   <div class="images"></div>

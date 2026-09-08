@@ -8,12 +8,13 @@
 import { WPlaceBot } from './bot'
 import { BotImage, UnownedColorStrategy } from './image'
 import { FillDirection, ImageStrategy, RegionOrder } from './ordering'
+import { DropletStrategy } from './widget'
 
 const DB_NAME = 'wbot'
 const STORE_NAME = 'saves'
 const KEY_NAME = 'wbot'
 const DB_VERSION = 1
-export const SAVE_VERSION = 6
+export const SAVE_VERSION = 8
 
 const dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
   const request = indexedDB.open(DB_NAME, DB_VERSION)
@@ -178,6 +179,20 @@ export function migrate(old: any): Awaited<ReturnType<WPlaceBot['toJSON']>> {
       images: save.images,
       strategy: save.strategy,
       title: 'WPlace-bot',
+    }
+  // Droplets used to go to colors only, and that stays the default
+  if (save.version < 7)
+    save = { ...save, dropletStrategy: DropletStrategy.COLORS, version: 7 }
+  // "Charges only" is gone. Colors first keeps buying charges, and an image
+  // that should never spend the balance on a color now says so on its own
+  if (save.version < 8)
+    save = {
+      ...save,
+      dropletStrategy:
+        save.dropletStrategy === 'CHARGES'
+          ? DropletStrategy.COLORS_FIRST
+          : save.dropletStrategy,
+      version: 8,
     }
   // Images carry their own version, so migrate them whatever the save says
   return {

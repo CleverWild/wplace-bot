@@ -53,7 +53,10 @@ export enum UnownedColorStrategy {
   SUBSTITUTE = 'SUBSTITUTE',
 }
 
-/** Time left to paint `remaining` pixels, counting stored and regenerated charges */
+/**
+ * Time left to paint `remaining` pixels, counting stored and regenerated
+ * charges, and the ones droplets pay for when the bot is set to buy them
+ */
 export function etaText(bot: WPlaceBot, remaining: number): string {
   const cooldownMs = bot.me?.charges.cooldownMs ?? 30000
   const minutes = estimateEtaMinutes(
@@ -62,6 +65,8 @@ export function etaText(bot: WPlaceBot, remaining: number): string {
     bot.me?.charges.max ?? 0,
     cooldownMs,
     bot.lastMeAt === undefined ? 0 : Date.now() - bot.lastMeAt,
+    bot.spendsOnCharges ? (bot.me?.droplets ?? 0) : undefined,
+    bot.colorsToBuy().length,
   )
   return formatEta(minutes)
 }
