@@ -408,6 +408,13 @@ class NoImageError extends WPlaceBotError {
   }
 }
 
+class NoMapError extends WPlaceBotError {
+  name = "NoMapError";
+  constructor(bot) {
+    super("❌ Couldn't find wplace's map. The site has probably changed.", bot);
+  }
+}
+
 // src/utils.ts
 function formatPercent(n) {
   if (Number.isNaN(n))
@@ -2716,6 +2723,54 @@ class BotImage extends Base2 {
   }
 }
 
+// src/map.ts
+var CHUNK_PREFIX = `${location.origin}/_app/immutable/`;
+var chunkUrls = new Set;
+new PerformanceObserver((list) => {
+  const entries = list.getEntries();
+  for (let index = 0;index < entries.length; index++) {
+    const { name } = entries[index];
+    if (name.startsWith(CHUNK_PREFIX) && name.endsWith(".js"))
+      chunkUrls.add(name);
+  }
+}).observe({ buffered: true, type: "resource" });
+var store;
+function isStore(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && "automatedClicks" in value && "map" in value;
+}
+async function findStore() {
+  for (const url of chunkUrls) {
+    let module;
+    try {
+      module = await import(url);
+    } catch {
+      continue;
+    }
+    const keys = Object.keys(module);
+    for (let index = 0;index < keys.length; index++) {
+      let value;
+      try {
+        value = module[keys[index]];
+      } catch {
+        continue;
+      }
+      if (isStore(value))
+        return value;
+    }
+  }
+  return;
+}
+async function findMap(bot, timeoutMs = 60000) {
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    store ??= await findStore();
+    if (store?.map)
+      return store.map;
+    await wait(100);
+  }
+  throw new NoMapError(bot);
+}
+
 // src/style.css
 var style_default = `/* stylelint-disable declaration-no-important */
 /* stylelint-disable plugin/no-low-performance-animation-properties */
@@ -3170,6 +3225,7 @@ class WPlaceBot {
   me;
   lastMeAt;
   $stars = [];
+  map;
   strategy = "SEQUENTIAL" /* SEQUENTIAL */;
   dropletStrategy = "COLORS_FIRST" /* COLORS_FIRST */;
   get spendsOnCharges() {
@@ -3219,6 +3275,7 @@ class WPlaceBot {
       progress(0.02);
       const $canvasContainer = await this.waitForElement(".maplibregl-canvas-container");
       progress(0.03);
+      this.map = await findMap(this);
       new MutationObserver((mutations) => {
         for (let index = 0;index < mutations.length; index++) {
           const mutation = mutations[index];

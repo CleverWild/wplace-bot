@@ -14,3 +14,10 @@ export class NoImageError extends WPlaceBotError {
     super('❌ No image is selected', bot)
   }
 }
+
+export class NoMapError extends WPlaceBotError {
+  public override name = 'NoMapError'
+  public constructor(bot: WPlaceBot) {
+    super("❌ Couldn't find wplace's map. The site has probably changed.", bot)
+  }
+}

@@ -1,6 +1,7 @@
 import { wait } from '@softsky/utils'
 
 import { BotImage, UnownedColorStrategy } from './image'
+import { findMap, type WplaceMap } from './map'
 import { obfuscateCSS } from './obfuscator'
 import { DELETE_ALL_DATA, loadSave, save, SAVE_VERSION } from './save'
 // @ts-ignore
@@ -86,6 +87,9 @@ export class WPlaceBot {
 
   /** Cached stars elements */
   public $stars: HTMLDivElement[] = []
+
+  /** wplace's own maplibre map. Set during init, before any image loads */
+  public map!: WplaceMap
 
   /** Strategy how to distribute draw calls between images */
   public strategy = BotStrategy.SEQUENTIAL
@@ -179,6 +183,7 @@ export class WPlaceBot {
           '.maplibregl-canvas-container',
         )
         progress(0.03)
+        this.map = await findMap(this)
         new MutationObserver((mutations: MutationRecord[]) => {
           // Stars come and go as wplace re-renders markers
           for (let index = 0; index < mutations.length; index++) {
