@@ -8,7 +8,6 @@ import css from './style.css' with { type: 'text' }
 import {
   CHARGES_PER_PACK,
   CHARGES_PER_PACK_WITH_PAYBACK,
-  confirmedTaskPrefix,
   formatEta,
   DROPLETS_PER_COLOR,
   DROPLETS_PER_PACK,
@@ -118,7 +117,8 @@ export class WPlaceBot {
   /** Last color drawn */
   protected lastColor?: number
 
-  protected paintResolvers: ((painted: boolean) => void)[] = []
+  /** Answers the one batched paint request the running draw() sent */
+  protected paintResolver?: (painted: number | undefined) => void
 
   public constructor(save?: Awaited<ReturnType<WPlaceBot['toJSON']>>) {
     // Preinit save data before page has loaded
@@ -254,12 +254,20 @@ export class WPlaceBot {
   /*
    * Paints every visible image until charges run out.
    *
+   * `submit` says whether the run hands the queue to wplace itself. Auto-Draw
+   * does, because the answer to that one request is where it learns what the
+   * run cost and whether droplets are worth spending. The Draw button does
+   * not: it only stages the pixels and leaves the paint button to the user.
+   *
    * Buying charges restarts the run so the new balance is read from `/me`, and
    * `dropletsBeforePurchase` is what stops that going round forever: a purchase
    * that did not actually take the money leaves the balance where it was, and
    * that is the failure the loop ends on.
    */
-  public draw(dropletsBeforePurchase = Infinity): Promise<void> {
+  public draw(
+    submit = false,
+    dropletsBeforePurchase = Infinity,
+  ): Promise<void> {
     this.widget.setDisabled('draw', true)
     this.widget.status = ''
     // Clear maps cache to refetch pixels
@@ -327,7 +335,7 @@ export class WPlaceBot {
           await this.closeAll()
           await wait(500)
           // Retry after color bought
-          return this.draw()
+          return this.draw(submit)
         }
         // Charges are only worth buying once the colors this run needs are paid for
         const wantsCharges =
@@ -349,14 +357,9 @@ export class WPlaceBot {
           // Retry after charges bought, so /me reports the new balance
           const droplets = this.me!.droplets
           if (packs > 0 && (await this.buyChargePacks(packs)))
-            return this.draw(droplets)
+            return this.draw(submit, droplets)
         }
         const indexes = new Map<BotImage, number>()
-        const pendingPaints: {
-          image: BotImage
-          index: number
-          confirmation: Promise<boolean>
-        }[] = []
 
         const drawTask = async (image: BotImage) => {
           let index = indexes.get(image)
@@ -368,8 +371,6 @@ export class WPlaceBot {
             image.tasks[dIndex]!,
             image.tasks[dIndex + 1]!,
           )
-          const confirmation = this.waitForPaint()
-          pendingPaints.push({ image, index, confirmation })
           const color =
             image.pixels[
               (worldPosition.globalY - image.position.globalY) * image.width +
@@ -451,8 +452,7 @@ export class WPlaceBot {
               ) {
                 const image = this.images[imageIndex]!
                 if (!image.visible) continue
-                const percent =
-                  1 - image.tasks.length / 2 / (image.width * image.height)
+                const percent = 1 - image.tasks.length / 2 / image.countedPixels
                 if (percent < minPercent) {
                   minPercent = percent
                   minImage = image
@@ -476,31 +476,30 @@ export class WPlaceBot {
           }
         }
 
-        const paintResults = await Promise.all(
-          pendingPaints.map((paint) => paint.confirmation),
-        )
-        const resultsByImage = new Map<BotImage, boolean[]>()
-        for (let index = 0; index < pendingPaints.length; index++) {
-          const paint = pendingPaints[index]!
-          let results = resultsByImage.get(paint.image)
-          if (results === undefined) {
-            results = []
-            resultsByImage.set(paint.image, results)
-          }
-          results[paint.index] = paintResults[index]!
-        }
-        for (const [image, results] of resultsByImage)
-          image.tasks = image.tasks.subarray(confirmedTaskPrefix(results) * 2)
+        // Nothing is painted until wplace's own button goes out. A run that
+        // sends the queue itself learns here what it cost; one that leaves the
+        // button to the user has painted nothing yet and must claim nothing
+        const queued = initialCharges - charges
+        const meBeforePaint = this.lastMeAt
+        const painted =
+          submit && queued > 0 ? await this.submitPaint(queued) : 0
+        // A batch is all-or-nothing in practice, and which pixels a short
+        // answer left out is not knowable, so keep the tasks and let the next
+        // run rebuild them from the map
+        if (painted >= queued)
+          for (const [image, value] of indexes)
+            image.tasks = image.tasks.subarray(value * 2)
 
         this.widget.update()
 
-        // Painting moves both counters and nothing re-reads /me until the next
-        // run, so keep our copy honest: the ETA and the wake-up time are read
-        // from it, and a stale balance hides droplets the run just earned
-        const painted = paintResults.filter((confirmed) => confirmed).length
-        this.me!.charges.count = Math.max(0, this.me!.charges.count - painted)
-        this.me!.droplets += painted * DROPLETS_PER_PIXEL
-        this.lastMeAt = Date.now()
+        // Painting moves both counters, and the ETA and the wake-up time read
+        // our copy of /me. wplace refetches it after some paints, so only
+        // correct the numbers by hand when it did not
+        if (this.lastMeAt === meBeforePaint) {
+          this.me!.charges.count = Math.max(0, this.me!.charges.count - painted)
+          this.me!.droplets += painted * DROPLETS_PER_PIXEL
+          this.lastMeAt = Date.now()
+        }
 
         // The bar is empty now, so the account maximum no longer caps a
         // purchase. Without this the droplets would sit unspent until the next
@@ -513,7 +512,7 @@ export class WPlaceBot {
           this.me!.droplets >= DROPLETS_PER_PACK &&
           this.images.some((image) => image.visible && image.tasks.length > 0)
         )
-          return this.draw()
+          return this.draw(submit)
       },
       () => {
         this.drawing = false
@@ -524,18 +523,38 @@ export class WPlaceBot {
     )
   }
 
-  public waitForPaint(): Promise<boolean> {
-    return new Promise((resolve) => {
-      const resolver = (painted: boolean) => {
-        clearTimeout(timeout)
-        resolve(painted)
-      }
+  /**
+   * Hands the queued pixels to wplace and reports how many of them it painted.
+   *
+   * wplace only stages what the space key drops and sends the lot as one
+   * `POST /paint` when its own button is clicked, so the run has to click it
+   * and wait right here. Clicking it after the run tells the run nothing: the
+   * charges it just spent and the droplets they earned would both stay
+   * invisible, and every purchase decision reads those two numbers.
+   */
+  protected submitPaint(queued: number): Promise<number> {
+    const PAINT_BUTTON = '.absolute.bottom-0  .btn.btn-lg.relative.btn-primary'
+    const $paint = document.querySelector<HTMLButtonElement>(PAINT_BUTTON)
+    // A disabled button means wplace staged none of the queue, and clicking it
+    // would only buy a 15-second timeout
+    if (!$paint || $paint.disabled) {
+      console.warn(`wbot: no usable ${PAINT_BUTTON}, nothing was painted`)
+      return Promise.resolve(0)
+    }
+    return new Promise<number>((resolve) => {
+      // A few thousand pixels are not answered in a moment, and a request that
+      // never lands must not hold the run forever
       const timeout = setTimeout(() => {
-        const index = this.paintResolvers.indexOf(resolver)
-        if (index !== -1) this.paintResolvers.splice(index, 1)
-        resolve(false)
-      }, 1000)
-      this.paintResolvers.push(resolver)
+        this.paintResolver = undefined
+        resolve(0)
+      }, 15000)
+      this.paintResolver = (painted) => {
+        clearTimeout(timeout)
+        // wplace's own client reads nothing off the body, so a plain OK with
+        // no count in it means the whole batch went through
+        resolve(painted ?? queued)
+      }
+      $paint.click()
     })
   }
 
@@ -546,8 +565,17 @@ export class WPlaceBot {
    * tasks need wastes a whole cycle, and arriving with the bar already full
    * leaves no room under the account maximum for a purchase. So aim at exactly
    * the charges the next run will spend, less the ones droplets can cover.
+   *
+   * A run spends nothing until it submits the whole queue at the very end, so
+   * a bar that tops out while it is still working regenerates nothing from
+   * that moment on. Come back early by as long as the run takes, and the bar
+   * fills up just as the run drains it.
    */
   protected msUntilNextDraw(): number {
+    // What a run costs before its charges are actually spent: a flat lead-in
+    // for loading, /me and zooming, plus the time to queue each pixel
+    const DRAW_BASE_MS = 2000
+    const DRAW_MS_PER_PIXEL = 5
     const cooldownMs = this.me?.charges.cooldownMs ?? 30000
     const maxCharges = this.me?.charges.max ?? 100
     let tasks = 0
@@ -562,10 +590,11 @@ export class WPlaceBot {
       ? Math.floor((this.me?.droplets ?? 0) / DROPLETS_PER_PACK) *
         CHARGES_PER_PACK
       : 0
-    const missing =
-      Math.min(tasks, maxCharges) - (this.me?.charges.count ?? 0) - bought
+    const painting = Math.min(tasks, maxCharges)
+    const missing = painting - (this.me?.charges.count ?? 0) - bought
+    const lead = DRAW_BASE_MS + painting * DRAW_MS_PER_PIXEL
     // Never come back in a tight loop, even when the numbers say "now"
-    return Math.max(1, missing) * cooldownMs
+    return Math.max(cooldownMs, missing * cooldownMs - lead)
   }
 
   public autoDraw() {
@@ -591,13 +620,8 @@ export class WPlaceBot {
         return
       }
       try {
-        await this.draw()
-        // Click draw
-        document
-          .querySelector<HTMLButtonElement>(
-            '.absolute.bottom-0  .btn.btn-lg.relative.btn-primary',
-          )
-          ?.click()
+        // Only Auto-Draw's runs send the queue; the Draw button stages it
+        await this.draw(true)
         errorCount = 0
       } catch {
         errorCount++
@@ -990,8 +1014,8 @@ export class WPlaceBot {
     const originalFetch = globalThis.fetch
     const pixelRegExp =
       /https:\/\/backend.wplace.live\/s\d+\/pixel\/(-?\d+)\/(-?\d+)\?x=(-?\d+)&y=(-?\d+)/
-    const paintRegExp =
-      /https:\/\/backend.wplace.live\/s\d+\/pixel\/(-?\d+)\/(-?\d+)$/
+    // Every staged pixel leaves in one batched request, whatever tiles it spans
+    const paintRegExp = /^https:\/\/backend\.wplace\.live\/paint(?:\?|$)/
     // @ts-ignore
     globalThis.fetch = async (request, options) => {
       const response = await originalFetch(request, options)
@@ -1002,12 +1026,12 @@ export class WPlaceBot {
       else if (request instanceof URL) url = request.href
       const method =
         request instanceof Request ? request.method : (options?.method ?? 'GET')
-      const paintMatch = paintRegExp.exec(url)
-      if (method.toUpperCase() === 'POST' && paintMatch) {
+      if (method.toUpperCase() === 'POST' && paintRegExp.test(url)) {
         const result = (await cloned.json().catch(() => undefined)) as
           { painted?: number } | undefined
-        const painted = response.ok && (result?.painted ?? 0) > 0
-        this.paintResolvers.shift()?.(painted)
+        const resolve = this.paintResolver
+        this.paintResolver = undefined
+        resolve?.(response.ok ? result?.painted : 0)
       }
       if (response.url === 'https://backend.wplace.live/me') {
         this.me = (await cloned.json()) as Me

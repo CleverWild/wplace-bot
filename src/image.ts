@@ -639,11 +639,22 @@ export class BotImage extends Base {
     this.$lock.textContent = this.lock ? '🔒' : '🔓'
   }
 
+  /**
+   * Pixels the progress counts. Transparent ones never become tasks unless
+   * they are asked for, so counting them would score them as already done and
+   * open the bar at whatever share of the rectangle the image leaves empty
+   */
+  public get countedPixels() {
+    const total = this.width * this.height
+    if (this.drawTransparentPixels) return total
+    return total - (this.colorsStat.get(0)?.amount ?? 0)
+  }
+
   public updateProgress() {
-    const maxTasks = this.width * this.height
+    const maxTasks = this.countedPixels
     const doneTasks = maxTasks - this.tasks.length / 2
-    const percent = formatPercent(doneTasks / maxTasks)
-    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, this.tasks.length / 2)}`
+    const percent = maxTasks ? doneTasks / maxTasks : 0
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${formatPercent(percent)} ETA: ${etaText(this.bot, this.tasks.length / 2)}`
     this.$progressLine.style.transform = `scaleX(${percent})`
   }
 

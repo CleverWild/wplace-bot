@@ -2,7 +2,6 @@ import { expect, test } from 'bun:test'
 
 import {
   CHARGES_PER_PACK_WITH_PAYBACK,
-  confirmedTaskPrefix,
   estimateEtaMinutes,
   formatEta,
   nextTaskIndex,
@@ -14,10 +13,6 @@ test('keeps the task queued when painting was not confirmed', () => {
 
 test('advances the task only after painting was confirmed', () => {
   expect(nextTaskIndex(3, true)).toBe(4)
-})
-
-test('keeps tasks after the first unconfirmed paint', () => {
-  expect(confirmedTaskPrefix([true, true, false, true])).toBe(2)
 })
 
 test('accounts for charges regenerated since the last account update', () => {

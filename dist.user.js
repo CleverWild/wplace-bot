@@ -71,39 +71,6 @@ var SESSION_ID = Math.floor(Math.random() * 4503599627370496).toString(16).padSt
 function wait(time) {
   return new Promise((r) => setTimeout(r, time));
 }
-class SimpleEventSource {
-  handlers = new Map;
-  send(name, data) {
-    return this.handlers.get(name)?.map((handler) => handler(data)) ?? [];
-  }
-  on(name, handler) {
-    let handlers = this.handlers.get(name);
-    if (!handlers) {
-      handlers = [];
-      this.handlers.set(name, handlers);
-    }
-    handlers.push(handler);
-    return () => {
-      removeFromArray(handlers, handler);
-      if (handlers.length === 0)
-        this.handlers.delete(name);
-    };
-  }
-  off(name, handler) {
-    const handlers = this.handlers.get(name);
-    if (!handlers)
-      return;
-    removeFromArray(handlers, handler);
-    if (handlers.length === 0)
-      this.handlers.delete(name);
-  }
-  get source() {
-    return {
-      on: this.on.bind(this),
-      off: this.off.bind(this)
-    };
-  }
-}
 function promisifyEventSource(target, resolveEvents, rejectEvents = ["error"], subName = "addEventListener") {
   return new Promise((resolve, reject) => {
     for (let index = 0;index < resolveEvents.length; index++)
@@ -114,46 +81,6 @@ function promisifyEventSource(target, resolveEvents, rejectEvents = ["error"], s
 }
 // node_modules/@softsky/utils/dist/signals.js
 var effectsMap = new WeakMap;
-// node_modules/@softsky/utils/dist/time.js
-class SpeedCalculator {
-  size;
-  historyTime;
-  sum = 0;
-  history = [];
-  statsCached;
-  startTime = Date.now();
-  constructor(size, historyTime = 15000) {
-    this.size = size;
-    this.historyTime = historyTime;
-  }
-  push(chunk) {
-    if (chunk < 0)
-      throw new Error("Negative chunk size");
-    const { time, historyTime } = this.getTime();
-    this.history.push({ time, chunk });
-    if (this.history[0] && this.history[0].time + historyTime < time)
-      this.history.shift();
-    this.sum += chunk;
-    delete this.statsCached;
-  }
-  get stats() {
-    if (!this.statsCached) {
-      const speed = this.history.reduce((sum, entry) => sum + entry.chunk, 0) / this.getTime().historyTime * 1000;
-      this.statsCached = this.size === undefined ? { speed } : {
-        speed,
-        percent: this.sum / this.size,
-        eta: ~~((this.size - this.sum) / speed) * 1000
-      };
-    }
-    return this.statsCached;
-  }
-  getTime() {
-    const time = Date.now();
-    const timeSinceStart = time - this.startTime;
-    const historyTime = Math.min(timeSinceStart, this.historyTime);
-    return { time, historyTime };
-  }
-}
 // src/obfuscator.ts
 var SID = Array.from({ length: 16 }, () => (10 + Math.random() * 26 | 0).toString(36)).join("");
 function obfucsateHTML(html) {
@@ -446,12 +373,6 @@ function estimateEtaMinutes(remaining, charges, maxCharges, cooldownMs, elapsedM
   }
   return Math.max(0, needed - availableCharges) * cooldownMs / 60000;
 }
-function confirmedTaskPrefix(results) {
-  let index = 0;
-  while (index < results.length && results[index])
-    index++;
-  return index;
-}
 
 // src/widget.html
 var widget_default = `<button class="open-button">
@@ -518,7 +439,7 @@ addFavoriteLocation({
   y: WORLD_PIXEL_SIZE / 3 * 2 | 0
 });
 function extractScreenPositionFromStar($star) {
-  const [x, y] = $star.style.transform.slice(32, -31).split(", ").map((x2) => Number.parseFloat(x2));
+  const [x, y] = $star.style.transform.slice(32, -31).split(", ").map((x) => Number.parseFloat(x));
   return { x, y };
 }
 
@@ -914,12 +835,12 @@ class Widget extends Base2 {
       const image = this.bot.images[index];
       if (image.disabled)
         continue;
-      maxTasks += image.width * image.height;
+      maxTasks += image.countedPixels;
       totalTasks += image.tasks.length / 2;
     }
     const doneTasks = maxTasks - totalTasks;
-    const percent = formatPercent(doneTasks / maxTasks);
-    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, totalTasks)}`;
+    const percent = maxTasks ? doneTasks / maxTasks : 0;
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${formatPercent(percent)} ETA: ${etaText(this.bot, totalTasks)}`;
     this.$progressLine.style.transform = `scaleX(${percent})`;
     for (let index = 0;index < this.bot.images.length; index++) {
       const image = this.bot.images[index];
@@ -1094,12 +1015,12 @@ function migrateImage(old) {
   return image;
 }
 function migrate(old) {
-  let save2 = old;
-  if (!save2.version || save2.version < 3)
-    save2 = {
+  let save = old;
+  if (!save.version || save.version < 3)
+    save = {
       version: 3,
-      images: save2.images,
-      strategy: save2.strategy,
+      images: save.images,
+      strategy: save.strategy,
       title: "WPlace-bot"
     };
   if (save.version < 7)
@@ -1111,9 +1032,9 @@ function migrate(old) {
       version: 8
     };
   return {
-    ...save2,
+    ...save,
     version: SAVE_VERSION,
-    images: save2.images.map(migrateImage)
+    images: save.images.map(migrateImage)
   };
 }
 
@@ -1362,9 +1283,9 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
             result[index + 1] = y;
             index += 2;
           }
-        for (let index2 = SIZE - 1;index2 >= 0; index2--) {
-          const randIndex = Math.floor(Math.random() * (index2 + 1)) * 2;
-          const realIndex = index2 * 2;
+        for (let index = SIZE - 1;index >= 0; index--) {
+          const randIndex = Math.floor(Math.random() * (index + 1)) * 2;
+          const realIndex = index * 2;
           const temporaryX = result[realIndex];
           const temporaryY = result[realIndex + 1];
           result[realIndex] = result[randIndex];
@@ -1810,9 +1731,9 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
     const metricFn = metricFunction(colorMetric);
     const isRgbMetric = colorMetric === "compuphase";
     const palette = isRgbMetric ? COLORS_RGB_TRIPLES : COLORS;
-    const pixels2 = new Uint8Array(SIZE);
+    const pixels = new Uint8Array(SIZE);
     const isSubstitute = unownedColorStrategy === "SUBSTITUTE" /* SUBSTITUTE */;
-    const realPixels = isSubstitute ? new Uint8Array(SIZE) : pixels2;
+    const realPixels = isSubstitute ? new Uint8Array(SIZE) : pixels;
     const colorStat = new Map;
     const colorCache = new Map;
     for (let index = 1;index < 64; index++)
@@ -1856,7 +1777,7 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
           }
           colorCache.set(key, [min, minReal]);
         }
-        pixels2[pi] = isSubstitute ? min : minReal;
+        pixels[pi] = isSubstitute ? min : minReal;
         if (isSubstitute)
           realPixels[pi] = minReal;
         const stat = colorStat.get(minReal);
@@ -1898,7 +1819,7 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       }
       const dx = positions[index];
       const dy = positions[index + 1];
-      const color = pixels2[dy * width + dx];
+      const color = pixels[dy * width + dx];
       const gx = globalX + dx;
       const gy = globalY + dy;
       const map = mapsCache.get(packTile(toTile(gx), toTile(gy)));
@@ -1927,9 +1848,9 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
     if (contrast || floodFill) {
       let order = taskPixels.subarray(0, tasks.length);
       if (contrast)
-        order = contrastOrder(order, pixels2, mapAt, width, height, contrastDistances(colorMetric));
+        order = contrastOrder(order, pixels, mapAt, width, height, contrastDistances(colorMetric));
       if (floodFill)
-        order = floodOrder(order, pixels2, width, height, regionOrder, fillDirection);
+        order = floodOrder(order, pixels, width, height, regionOrder, fillDirection);
       ordered = Array.from({ length: order.length });
       for (let index = 0;index < order.length; index++)
         ordered[index] = tasks[taskOf[order[index]]];
@@ -1942,7 +1863,7 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
         const task = ordered[index];
         current[index] = (task.gy - globalY) * width + (task.gx - globalX);
       }
-      const order = outlineFirstOrder(current, outlineMask(pixels2, width, height));
+      const order = outlineFirstOrder(current, outlineMask(pixels, width, height));
       const outlined = Array.from({ length: order.length });
       for (let index = 0;index < order.length; index++)
         outlined[index] = tasks[taskOf[order[index]]];
@@ -1959,8 +1880,8 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       id,
       taskPositions,
       colorStat,
-      pixels: pixels2
-    }, [taskPositions.buffer, pixels2.buffer]);
+      pixels
+    }, [taskPositions.buffer, pixels.buffer]);
   }
   function contrastDistances(colorMetric) {
     const metricFn = metricFunction(colorMetric);
@@ -2006,17 +1927,17 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
     ctx.drawImage(bitmap, 0, 0);
     const data = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
     const SIZE = bitmap.height * bitmap.width;
-    const pixels2 = new Uint8Array(SIZE);
+    const pixels = new Uint8Array(SIZE);
     for (let i = 0, pi = 0;i < data.length; i += 4, pi++) {
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
       const a = data[i + 3];
       const key = r << 16 | g << 8 | b;
-      pixels2[pi] = a < 100 ? 0 : COLORS_RGB_MAP.get(key) ?? 0;
+      pixels[pi] = a < 100 ? 0 : COLORS_RGB_MAP.get(key) ?? 0;
     }
-    mapsCache.set(packTile(tileX, tileY), pixels2);
-    return pixels2;
+    mapsCache.set(packTile(tileX, tileY), pixels);
+    return pixels;
   }
   var packTile = (tileX, tileY) => tileX << 11 | tileY;
   var toTile = (n) => n / WORLD_TILE_SIZE | 0;
@@ -2497,11 +2418,17 @@ class BotImage extends Base2 {
       removeClass(this.$wrapper, "no-pointer-events");
     this.$lock.textContent = this.lock ? "\uD83D\uDD12" : "\uD83D\uDD13";
   }
+  get countedPixels() {
+    const total = this.width * this.height;
+    if (this.drawTransparentPixels)
+      return total;
+    return total - (this.colorsStat.get(0)?.amount ?? 0);
+  }
   updateProgress() {
-    const maxTasks = this.width * this.height;
+    const maxTasks = this.countedPixels;
     const doneTasks = maxTasks - this.tasks.length / 2;
-    const percent = formatPercent(doneTasks / maxTasks);
-    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent} ETA: ${etaText(this.bot, this.tasks.length / 2)}`;
+    const percent = maxTasks ? doneTasks / maxTasks : 0;
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${formatPercent(percent)} ETA: ${etaText(this.bot, this.tasks.length / 2)}`;
     this.$progressLine.style.transform = `scaleX(${percent})`;
   }
   destroy() {
@@ -3171,7 +3098,7 @@ class WPlaceBot {
   lastMeAt;
   $stars = [];
   strategy = "SEQUENTIAL" /* SEQUENTIAL */;
-  dropletStrategy = "COLORS" /* COLORS */;
+  dropletStrategy = "COLORS_FIRST" /* COLORS_FIRST */;
   get spendsOnCharges() {
     return this.dropletStrategy !== "COLORS" /* COLORS */;
   }
@@ -3181,11 +3108,11 @@ class WPlaceBot {
   widget = new Widget(this);
   markerPixelPositionResolvers = [];
   lastColor;
-  paintResolvers = [];
-  constructor(save2) {
-    if (save2) {
-      for (let index = 0;index < save2.images.length; index++) {
-        const image = save2.images[index];
+  paintResolver;
+  constructor(save) {
+    if (save) {
+      for (let index = 0;index < save.images.length; index++) {
+        const image = save.images[index];
         addFavoriteLocation({
           x: image.position[0] - 1000,
           y: image.position[1] - 1000
@@ -3195,13 +3122,13 @@ class WPlaceBot {
           y: image.position[1] + 1000
         });
       }
-      this.strategy = save2.strategy;
-      this.dropletStrategy = save2.dropletStrategy;
-      this.title = save2.title;
+      this.strategy = save.strategy;
+      this.dropletStrategy = save.dropletStrategy;
+      this.title = save.title;
     } else {
       this.title = "WPlace-bot";
     }
-    const known = new Set(save2?.images.map((image) => image.wplaceId));
+    const known = new Set(save?.images.map((image) => image.wplaceId));
     const newTemplates = readSiteTemplates().filter((template) => !known.has(template.id));
     for (let index = 0;index < newTemplates.length; index++) {
       const [x, y] = newTemplates[index].data.position;
@@ -3239,10 +3166,10 @@ class WPlaceBot {
       progress(0.04);
       await this.updateColorsData();
       progress(0.05);
-      if (save2) {
-        const batchSize = 1 / save2.images.length;
-        for (let index = 0;index < save2.images.length; index++) {
-          await BotImage.fromJSON(this, save2.images[index], (p) => {
+      if (save) {
+        const batchSize = 1 / save.images.length;
+        for (let index = 0;index < save.images.length; index++) {
+          await BotImage.fromJSON(this, save.images[index], (p) => {
             progress(0.05 + (index * batchSize + p * batchSize) * 0.95);
           });
         }
@@ -3278,7 +3205,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       }
     });
   }
-  draw(dropletsBeforePurchase = Infinity) {
+  draw(submit = false, dropletsBeforePurchase = Infinity) {
     this.widget.setDisabled("draw", true);
     this.widget.status = "";
     const $canvas = document.querySelector(".maplibregl-canvas");
@@ -3293,14 +3220,14 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       this.drawing = true;
       globalThis.addEventListener("mousemove", prevent, true);
       $canvas.addEventListener("wheel", prevent, true);
-      await this.widget.run("Loading", (progress2) => Promise.all([
+      await this.widget.run("Loading", (progress) => Promise.all([
         this.updateColorsData().then(async () => {
           workerClearMapCache();
           await wait(100);
           const batchSize = 1 / this.images.length;
           for (let index = 0;index < this.images.length; index++)
             await this.images[index].updatePixels((p) => {
-              progress2(index * batchSize + p * batchSize);
+              progress(index * batchSize + p * batchSize);
             });
         }),
         this.zoomIn(4, $canvas),
@@ -3327,17 +3254,16 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         await wait(1000);
         await this.closeAll();
         await wait(500);
-        return this.draw();
+        return this.draw(submit);
       }
       const wantsCharges = this.dropletStrategy === "COLORS_FIRST" /* COLORS_FIRST */ && colorToBuy === undefined;
       if (wantsCharges && this.me.droplets < dropletsBeforePurchase) {
         const packs = Math.min(Math.ceil((tasksLength - initialCharges) / CHARGES_PER_PACK_WITH_PAYBACK), Math.floor(this.me.droplets / DROPLETS_PER_PACK), Math.floor((this.me.charges.max - initialCharges) / CHARGES_PER_PACK));
         const droplets = this.me.droplets;
         if (packs > 0 && await this.buyChargePacks(packs))
-          return this.draw(droplets);
+          return this.draw(submit, droplets);
       }
       const indexes = new Map;
-      const pendingPaints = [];
       const drawTask = async (image) => {
         let index = indexes.get(image);
         if (index === undefined)
@@ -3346,8 +3272,6 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         if (dIndex === image.tasks.length)
           return;
         const worldPosition = new WorldPosition(this, image.tasks[dIndex], image.tasks[dIndex + 1]);
-        const confirmation = this.waitForPaint();
-        pendingPaints.push({ image, index, confirmation });
         const color = image.pixels[(worldPosition.globalY - image.position.globalY) * image.width + (worldPosition.globalX - image.position.globalX)];
         if (this.lastColor !== color) {
           document.getElementById("color-" + color).click();
@@ -3407,7 +3331,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
               const image = this.images[imageIndex];
               if (!image.visible)
                 continue;
-              const percent = 1 - image.tasks.length / 2 / (image.width * image.height);
+              const percent = 1 - image.tasks.length / 2 / image.countedPixels;
               if (percent < minPercent) {
                 minPercent = percent;
                 minImage = image;
@@ -3428,26 +3352,20 @@ Developer will try to fix your save. Be vary that github issues are public, and 
           }
         }
       }
-      const paintResults = await Promise.all(pendingPaints.map((paint) => paint.confirmation));
-      const resultsByImage = new Map;
-      for (let index = 0;index < pendingPaints.length; index++) {
-        const paint = pendingPaints[index];
-        let results = resultsByImage.get(paint.image);
-        if (results === undefined) {
-          results = [];
-          resultsByImage.set(paint.image, results);
-        }
-        results[paint.index] = paintResults[index];
-      }
-      for (const [image, results] of resultsByImage)
-        image.tasks = image.tasks.subarray(confirmedTaskPrefix(results) * 2);
+      const queued = initialCharges - charges;
+      const meBeforePaint = this.lastMeAt;
+      const painted = submit && queued > 0 ? await this.submitPaint(queued) : 0;
+      if (painted >= queued)
+        for (const [image, value] of indexes)
+          image.tasks = image.tasks.subarray(value * 2);
       this.widget.update();
-      const painted = paintResults.filter((confirmed) => confirmed).length;
-      this.me.charges.count = Math.max(0, this.me.charges.count - painted);
-      this.me.droplets += painted * DROPLETS_PER_PIXEL;
-      this.lastMeAt = Date.now();
+      if (this.lastMeAt === meBeforePaint) {
+        this.me.charges.count = Math.max(0, this.me.charges.count - painted);
+        this.me.droplets += painted * DROPLETS_PER_PIXEL;
+        this.lastMeAt = Date.now();
+      }
       if (wantsCharges && painted > 0 && this.me.droplets >= DROPLETS_PER_PACK && this.images.some((image) => image.visible && image.tasks.length > 0))
-        return this.draw();
+        return this.draw(submit);
     }, () => {
       this.drawing = false;
       globalThis.removeEventListener("mousemove", prevent, true);
@@ -3455,22 +3373,28 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       this.widget.setDisabled("draw", false);
     });
   }
-  waitForPaint() {
+  submitPaint(queued) {
+    const PAINT_BUTTON = ".absolute.bottom-0  .btn.btn-lg.relative.btn-primary";
+    const $paint = document.querySelector(PAINT_BUTTON);
+    if (!$paint || $paint.disabled) {
+      console.warn(`wbot: no usable ${PAINT_BUTTON}, nothing was painted`);
+      return Promise.resolve(0);
+    }
     return new Promise((resolve) => {
-      const resolver = (painted) => {
-        clearTimeout(timeout);
-        resolve(painted);
-      };
       const timeout = setTimeout(() => {
-        const index = this.paintResolvers.indexOf(resolver);
-        if (index !== -1)
-          this.paintResolvers.splice(index, 1);
-        resolve(false);
-      }, 1000);
-      this.paintResolvers.push(resolver);
+        this.paintResolver = undefined;
+        resolve(0);
+      }, 15000);
+      this.paintResolver = (painted) => {
+        clearTimeout(timeout);
+        resolve(painted ?? queued);
+      };
+      $paint.click();
     });
   }
   msUntilNextDraw() {
+    const DRAW_BASE_MS = 2000;
+    const DRAW_MS_PER_PIXEL = 5;
     const cooldownMs = this.me?.charges.cooldownMs ?? 30000;
     const maxCharges = this.me?.charges.max ?? 100;
     let tasks = 0;
@@ -3483,8 +3407,10 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       return maxCharges * cooldownMs;
     const buysCharges = this.spendsOnCharges && this.colorsToBuy().length === 0;
     const bought = buysCharges ? Math.floor((this.me?.droplets ?? 0) / DROPLETS_PER_PACK) * CHARGES_PER_PACK : 0;
-    const missing = Math.min(tasks, maxCharges) - (this.me?.charges.count ?? 0) - bought;
-    return Math.max(1, missing) * cooldownMs;
+    const painting = Math.min(tasks, maxCharges);
+    const missing = painting - (this.me?.charges.count ?? 0) - bought;
+    const lead = DRAW_BASE_MS + painting * DRAW_MS_PER_PIXEL;
+    return Math.max(cooldownMs, missing * cooldownMs - lead);
   }
   autoDraw() {
     if (this.autoDrawInterval) {
@@ -3507,8 +3433,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         return;
       }
       try {
-        await this.draw();
-        document.querySelector(".absolute.bottom-0  .btn.btn-lg.relative.btn-primary")?.click();
+        await this.draw(true);
         errorCount = 0;
       } catch {
         errorCount++;
@@ -3786,7 +3711,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
   registerFetchInterceptor() {
     const originalFetch = globalThis.fetch;
     const pixelRegExp = /https:\/\/backend.wplace.live\/s\d+\/pixel\/(-?\d+)\/(-?\d+)\?x=(-?\d+)&y=(-?\d+)/;
-    const paintRegExp = /https:\/\/backend.wplace.live\/s\d+\/pixel\/(-?\d+)\/(-?\d+)$/;
+    const paintRegExp = /^https:\/\/backend\.wplace\.live\/paint(?:\?|$)/;
     globalThis.fetch = async (request, options) => {
       const response = await originalFetch(request, options);
       const cloned = response.clone();
@@ -3798,13 +3723,13 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       else if (request instanceof URL)
         url = request.href;
       const method = request instanceof Request ? request.method : options?.method ?? "GET";
-      const paintMatch = paintRegExp.exec(url);
-      if (method.toUpperCase() === "POST" && paintMatch) {
+      if (method.toUpperCase() === "POST" && paintRegExp.test(url)) {
         const result = await cloned.json().catch(() => {
           return;
         });
-        const painted = response.ok && (result?.painted ?? 0) > 0;
-        this.paintResolvers.shift()?.(painted);
+        const resolve = this.paintResolver;
+        this.paintResolver = undefined;
+        resolve?.(response.ok ? result?.painted : 0);
       }
       if (response.url === "https://backend.wplace.live/me") {
         this.me = await cloned.json();

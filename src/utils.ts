@@ -71,9 +71,3 @@ export function estimateEtaMinutes(
 export function nextTaskIndex(index: number, painted: boolean) {
   return painted ? index + 1 : index
 }
-
-export function confirmedTaskPrefix(results: readonly boolean[]) {
-  let index = 0
-  while (index < results.length && results[index]) index++
-  return index
-}
