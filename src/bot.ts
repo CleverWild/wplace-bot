@@ -18,9 +18,7 @@ import { BotStrategy, DropletStrategy, Widget } from './widget'
 import { workerClearMapCache } from './worker-client'
 import {
   addFavoriteLocation,
-  extractScreenPositionFromStar,
   FAVORITE_LOCATIONS,
-  FAVORITE_LOCATIONS_POSITIONS,
   type Position,
   WorldPosition,
 } from './world-position'
@@ -84,9 +82,6 @@ export class WPlaceBot {
 
   /** Timestamp of the last successful /me response */
   public lastMeAt?: number
-
-  /** Cached stars elements */
-  public $stars: HTMLDivElement[] = []
 
   /** wplace's own maplibre map. Set during init, before any image loads */
   public map!: WplaceMap
@@ -184,18 +179,7 @@ export class WPlaceBot {
         )
         progress(0.03)
         this.map = await findMap(this)
-        new MutationObserver((mutations: MutationRecord[]) => {
-          // Stars come and go as wplace re-renders markers
-          for (let index = 0; index < mutations.length; index++) {
-            const mutation = mutations[index]!
-            if (
-              mutation.removedNodes.length !== 0 ||
-              mutation.addedNodes.length !== 0
-            ) {
-              this.updateStars()
-              break
-            }
-          }
+        new MutationObserver(() => {
           for (let index = 0; index < this.images.length; index++)
             this.images[index]!.updateUI()
         }).observe($canvasContainer, {
@@ -203,7 +187,6 @@ export class WPlaceBot {
           childList: true,
           subtree: true,
         })
-        this.updateStars()
         await wait(500) // Sometimes wplace UI becomes bugged if interacted too early
         progress(0.04)
         await this.updateColorsData()
@@ -871,42 +854,6 @@ export class WPlaceBot {
     fire('mouseup', endX, endY)
   }
 
-  /** Find anchor data for screen postition */
-  public findAnchorsForScreen(position: Position) {
-    let anchorIndex = 0
-    let minI2 = 1
-    let min1 = Infinity
-    let min2 = Infinity
-    for (let index = 0; index < this.$stars.length; index++) {
-      const { x, y } = extractScreenPositionFromStar(this.$stars[index]!)
-      if (x < position.x && y < position.y) {
-        const delta = position.x - x + (position.y - y)
-        if (delta < min1) {
-          min1 = delta
-          anchorIndex = index
-        }
-      } else if (x > position.x && y > position.y) {
-        const delta = x - position.x + (y - position.y)
-        if (delta < min2) {
-          min2 = delta
-          minI2 = index
-        }
-      }
-    }
-    const anchorScreenPosition = extractScreenPositionFromStar(
-      this.$stars[anchorIndex]!,
-    )
-    const anchorWorldPosition = FAVORITE_LOCATIONS_POSITIONS[anchorIndex]!
-    return {
-      anchorScreenPosition,
-      anchorWorldPosition,
-      pixelSize:
-        (extractScreenPositionFromStar(this.$stars[minI2]!).x -
-          anchorScreenPosition.x) /
-        (FAVORITE_LOCATIONS_POSITIONS[minI2]!.x - anchorWorldPosition.x),
-    }
-  }
-
   /** Close drawing on focus to not consume space */
   public fixSpaceInInput(input: HTMLInputElement) {
     input.addEventListener('focus', () => this.closeAll())
@@ -973,21 +920,6 @@ export class WPlaceBot {
         subtree: true,
       })
     })
-  }
-
-  /** Simply update $stars property */
-  protected updateStars() {
-    const previous = this.$stars.length
-    this.$stars = [
-      ...document.querySelectorAll<HTMLDivElement>(
-        '.text-yellow-400.cursor-pointer.z-10.maplibregl-marker.maplibregl-marker-anchor-center',
-      ),
-    ].slice(0, FAVORITE_LOCATIONS.length)
-    // A changed count means anchors arrived (or left) with a /me, so images
-    // can pick better ones
-    if (this.$stars.length !== previous)
-      for (let index = 0; index < this.images.length; index++)
-        this.images[index]!.position.updateAnchor()
   }
 
   /** Zoom in canvas */

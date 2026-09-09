@@ -541,10 +541,8 @@ export class BotImage extends Base {
     this.siteDisabled = disabled
     if (data.name !== undefined) this.name = data.name
     if (data.lock !== undefined) this.lock = data.lock
-    if (redraw) {
-      this.position.updateAnchor()
-      await this.updatePixels()
-    } else this.updateUI()
+    if (redraw) await this.updatePixels()
+    else this.updateUI()
     return true
   }
 
@@ -831,7 +829,6 @@ export class BotImage extends Base {
   protected async moveStop() {
     if (this.moveInfo) {
       this.moveInfo = undefined
-      this.position.updateAnchor()
       await this.updatePixels()
     }
   }

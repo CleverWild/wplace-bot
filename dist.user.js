@@ -501,6 +501,9 @@ function latitudeToWorld(latitude) {
 function longitudeToWorld(longitude) {
   return (longitude * Math.PI / 180 + Math.PI) / (2 * Math.PI) * WORLD_PIXEL_SIZE;
 }
+function pixelSizeForZoom(zoom) {
+  return 512 * 2 ** zoom / WORLD_PIXEL_SIZE;
+}
 function addFavoriteLocation(position) {
   FAVORITE_LOCATIONS_POSITIONS.push(position);
   FAVORITE_LOCATIONS.push({
@@ -518,10 +521,6 @@ addFavoriteLocation({
   x: WORLD_PIXEL_SIZE / 3 * 2 | 0,
   y: WORLD_PIXEL_SIZE / 3 * 2 | 0
 });
-function extractScreenPositionFromStar($star) {
-  const [x, y] = $star.style.transform.slice(32, -31).split(", ").map((x2) => Number.parseFloat(x2));
-  return { x, y };
-}
 
 class WorldPosition {
   bot;
@@ -529,8 +528,8 @@ class WorldPosition {
     return new WorldPosition(bot, ...data);
   }
   static fromScreenPosition(bot, position) {
-    const { anchorScreenPosition, pixelSize, anchorWorldPosition } = bot.findAnchorsForScreen(position);
-    return new WorldPosition(bot, anchorWorldPosition.x + (position.x - anchorScreenPosition.x) / pixelSize | 0, anchorWorldPosition.y + (position.y - anchorScreenPosition.y) / pixelSize | 0);
+    const { lat, lng } = bot.map.unproject([position.x, position.y]);
+    return new WorldPosition(bot, longitudeToWorld(lng) | 0, latitudeToWorld(lat) | 0);
   }
   globalX = 0;
   globalY = 0;
@@ -558,10 +557,8 @@ class WorldPosition {
   set y(value) {
     this.globalY = this.tileY * WORLD_TILE_SIZE + value;
   }
-  anchor1Index;
-  anchor2Index;
   get pixelSize() {
-    return (extractScreenPositionFromStar(this.bot.$stars[this.anchor2Index]).x - extractScreenPositionFromStar(this.bot.$stars[this.anchor1Index]).x) / (FAVORITE_LOCATIONS_POSITIONS[this.anchor2Index].x - FAVORITE_LOCATIONS_POSITIONS[this.anchor1Index].x);
+    return pixelSizeForZoom(this.bot.map.getZoom());
   }
   constructor(bot, tileorGlobalX, tileorGlobalY, x, y) {
     this.bot = bot;
@@ -572,38 +569,12 @@ class WorldPosition {
       this.globalX = tileorGlobalX * WORLD_TILE_SIZE + x;
       this.globalY = tileorGlobalY * WORLD_TILE_SIZE + y;
     }
-    this.updateAnchor();
-  }
-  updateAnchor() {
-    this.anchor1Index = 0;
-    this.anchor2Index = 1;
-    let min1 = Infinity;
-    let min2 = Infinity;
-    const anchors = Math.min(FAVORITE_LOCATIONS_POSITIONS.length, this.bot.$stars.length);
-    for (let index = 0;index < anchors; index++) {
-      const { x, y } = FAVORITE_LOCATIONS_POSITIONS[index];
-      if (x < this.globalX && y < this.globalY) {
-        const delta = this.globalX - x + (this.globalY - y);
-        if (delta < min1) {
-          min1 = delta;
-          this.anchor1Index = index;
-        }
-      } else if (x > this.globalX && y > this.globalY) {
-        const delta = x - this.globalX + (y - this.globalY);
-        if (delta < min2) {
-          min2 = delta;
-          this.anchor2Index = index;
-        }
-      }
-    }
   }
   toScreenPosition() {
-    const worldPosition = FAVORITE_LOCATIONS_POSITIONS[this.anchor1Index];
-    const screenPosition = extractScreenPositionFromStar(this.bot.$stars[this.anchor1Index]);
-    return {
-      x: (this.globalX - worldPosition.x) * this.pixelSize + screenPosition.x,
-      y: (this.globalY - worldPosition.y) * this.pixelSize + screenPosition.y
-    };
+    return this.bot.map.project([
+      worldToLongitude(this.globalX),
+      worldToLatitude(this.globalY)
+    ]);
   }
   moveScreenTo() {
     const { x, y } = this.toScreenPosition();
@@ -2407,10 +2378,9 @@ class BotImage extends Base2 {
       this.name = data.name;
     if (data.lock !== undefined)
       this.lock = data.lock;
-    if (redraw) {
-      this.position.updateAnchor();
+    if (redraw)
       await this.updatePixels();
-    } else
+    else
       this.updateUI();
     return true;
   }
@@ -2652,7 +2622,6 @@ class BotImage extends Base2 {
   async moveStop() {
     if (this.moveInfo) {
       this.moveInfo = undefined;
-      this.position.updateAnchor();
       await this.updatePixels();
     }
   }
@@ -3224,7 +3193,6 @@ class WPlaceBot {
   mapsCache = new Uint8Array(0);
   me;
   lastMeAt;
-  $stars = [];
   map;
   strategy = "SEQUENTIAL" /* SEQUENTIAL */;
   dropletStrategy = "COLORS_FIRST" /* COLORS_FIRST */;
@@ -3276,14 +3244,7 @@ class WPlaceBot {
       const $canvasContainer = await this.waitForElement(".maplibregl-canvas-container");
       progress(0.03);
       this.map = await findMap(this);
-      new MutationObserver((mutations) => {
-        for (let index = 0;index < mutations.length; index++) {
-          const mutation = mutations[index];
-          if (mutation.removedNodes.length !== 0 || mutation.addedNodes.length !== 0) {
-            this.updateStars();
-            break;
-          }
-        }
+      new MutationObserver(() => {
         for (let index = 0;index < this.images.length; index++)
           this.images[index].updateUI();
       }).observe($canvasContainer, {
@@ -3291,7 +3252,6 @@ class WPlaceBot {
         childList: true,
         subtree: true
       });
-      this.updateStars();
       await wait(500);
       progress(0.04);
       await this.updateColorsData();
@@ -3735,35 +3695,6 @@ Developer will try to fix your save. Be vary that github issues are public, and 
     fire("mousemove", endX, endY);
     fire("mouseup", endX, endY);
   }
-  findAnchorsForScreen(position) {
-    let anchorIndex = 0;
-    let minI2 = 1;
-    let min1 = Infinity;
-    let min2 = Infinity;
-    for (let index = 0;index < this.$stars.length; index++) {
-      const { x, y } = extractScreenPositionFromStar(this.$stars[index]);
-      if (x < position.x && y < position.y) {
-        const delta = position.x - x + (position.y - y);
-        if (delta < min1) {
-          min1 = delta;
-          anchorIndex = index;
-        }
-      } else if (x > position.x && y > position.y) {
-        const delta = x - position.x + (y - position.y);
-        if (delta < min2) {
-          min2 = delta;
-          minI2 = index;
-        }
-      }
-    }
-    const anchorScreenPosition = extractScreenPositionFromStar(this.$stars[anchorIndex]);
-    const anchorWorldPosition = FAVORITE_LOCATIONS_POSITIONS[anchorIndex];
-    return {
-      anchorScreenPosition,
-      anchorWorldPosition,
-      pixelSize: (extractScreenPositionFromStar(this.$stars[minI2]).x - anchorScreenPosition.x) / (FAVORITE_LOCATIONS_POSITIONS[minI2].x - anchorWorldPosition.x)
-    };
-  }
   fixSpaceInInput(input) {
     input.addEventListener("focus", () => this.closeAll());
   }
@@ -3806,15 +3737,6 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         subtree: true
       });
     });
-  }
-  updateStars() {
-    const previous = this.$stars.length;
-    this.$stars = [
-      ...document.querySelectorAll(".text-yellow-400.cursor-pointer.z-10.maplibregl-marker.maplibregl-marker-anchor-center")
-    ].slice(0, FAVORITE_LOCATIONS.length);
-    if (this.$stars.length !== previous)
-      for (let index = 0;index < this.images.length; index++)
-        this.images[index].position.updateAnchor();
   }
   async zoomIn(zoom, canvas = document.querySelector(".maplibregl-canvas")) {
     const position = this.images[0].position;

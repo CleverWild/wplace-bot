@@ -75,14 +75,6 @@ addFavoriteLocation({
   y: ((WORLD_PIXEL_SIZE / 3) * 2) | 0,
 })
 
-export function extractScreenPositionFromStar($star: HTMLDivElement) {
-  const [x, y] = $star.style.transform
-    .slice(32, -31)
-    .split(', ')
-    .map((x) => Number.parseFloat(x)) as [number, number]
-  return { x, y }
-}
-
 export class WorldPosition {
   public static fromJSON(
     bot: WPlaceBot,
@@ -92,16 +84,11 @@ export class WorldPosition {
   }
 
   public static fromScreenPosition(bot: WPlaceBot, position: Position) {
-    const { anchorScreenPosition, pixelSize, anchorWorldPosition } =
-      bot.findAnchorsForScreen(position)
+    const { lat, lng } = bot.map.unproject([position.x, position.y])
     return new WorldPosition(
       bot,
-      (anchorWorldPosition.x +
-        (position.x - anchorScreenPosition.x) / pixelSize) |
-        0,
-      (anchorWorldPosition.y +
-        (position.y - anchorScreenPosition.y) / pixelSize) |
-        0,
+      longitudeToWorld(lng) | 0,
+      latitudeToWorld(lat) | 0,
     )
   }
 
@@ -137,20 +124,9 @@ export class WorldPosition {
     this.globalY = this.tileY * WORLD_TILE_SIZE + value
   }
 
-  /** Anchor that is used to align screen position for this world positions */
-  public anchor1Index!: number
-
-  /** Second anchor that is used to align screen position for this world positions */
-  public anchor2Index!: number
-
-  /** Pixel size around with world position. Calculated on every read */
+  /** Screen pixels one map pixel takes right now */
   public get pixelSize() {
-    return (
-      (extractScreenPositionFromStar(this.bot.$stars[this.anchor2Index]!).x -
-        extractScreenPositionFromStar(this.bot.$stars[this.anchor1Index]!).x) /
-      (FAVORITE_LOCATIONS_POSITIONS[this.anchor2Index]!.x -
-        FAVORITE_LOCATIONS_POSITIONS[this.anchor1Index]!.x)
-    )
+    return pixelSizeForZoom(this.bot.map.getZoom())
   }
 
   public constructor(
@@ -167,49 +143,14 @@ export class WorldPosition {
       this.globalX = tileorGlobalX * WORLD_TILE_SIZE + x
       this.globalY = tileorGlobalY * WORLD_TILE_SIZE + y
     }
-    this.updateAnchor()
-  }
-
-  /** Find closest anchor point for best accuracy */
-  public updateAnchor() {
-    this.anchor1Index = 0
-    this.anchor2Index = 1
-    let min1 = Infinity
-    let min2 = Infinity
-    // Anchors added after load have no star on the map yet, and reading one
-    // would throw. They start counting once /me delivers them.
-    const anchors = Math.min(
-      FAVORITE_LOCATIONS_POSITIONS.length,
-      this.bot.$stars.length,
-    )
-    for (let index = 0; index < anchors; index++) {
-      const { x, y } = FAVORITE_LOCATIONS_POSITIONS[index]!
-      if (x < this.globalX && y < this.globalY) {
-        const delta = this.globalX - x + (this.globalY - y)
-        if (delta < min1) {
-          min1 = delta
-          this.anchor1Index = index
-        }
-      } else if (x > this.globalX && y > this.globalY) {
-        const delta = x - this.globalX + (y - this.globalY)
-        if (delta < min2) {
-          min2 = delta
-          this.anchor2Index = index
-        }
-      }
-    }
   }
 
   /** Get screen position */
   public toScreenPosition(): Position {
-    const worldPosition = FAVORITE_LOCATIONS_POSITIONS[this.anchor1Index]!
-    const screenPosition = extractScreenPositionFromStar(
-      this.bot.$stars[this.anchor1Index]!,
-    )
-    return {
-      x: (this.globalX - worldPosition.x) * this.pixelSize + screenPosition.x,
-      y: (this.globalY - worldPosition.y) * this.pixelSize + screenPosition.y,
-    }
+    return this.bot.map.project([
+      worldToLongitude(this.globalX),
+      worldToLatitude(this.globalY),
+    ])
   }
 
   /** Scroll screen to this position */
