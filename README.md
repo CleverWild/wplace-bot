@@ -38,4 +38,4 @@
 2. Install dependencies `bun i`
 3. Up version in `script.txt`
 4. Lint `bun run lint`
-5. Build `bun start`
+5. Build `bun run build`
