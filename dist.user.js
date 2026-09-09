@@ -3168,17 +3168,15 @@ class WPlaceBot {
       progress(0.01);
       await this.waitForElement(".btn.btn-primary.btn-lg.relative.z-30 canvas");
       progress(0.02);
-      const $canvasContainer = await this.waitForElement(".maplibregl-canvas-container");
+      await this.waitForElement(".maplibregl-canvas-container");
       progress(0.03);
       this.map = await findMap(this);
-      new MutationObserver(() => {
+      const redraw = () => {
         for (let index = 0;index < this.images.length; index++)
           this.images[index].updateUI();
-      }).observe($canvasContainer, {
-        attributes: true,
-        childList: true,
-        subtree: true
-      });
+      };
+      this.map.on("move", redraw);
+      this.map.on("resize", redraw);
       await wait(500);
       progress(0.04);
       await this.updateColorsData();
