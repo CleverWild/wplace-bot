@@ -1,4 +1,4 @@
-import { type Me, type WPlaceBot } from './bot'
+import { type WPlaceBot } from './bot'
 
 export type Position = {
   x: number
@@ -9,10 +9,6 @@ export const WORLD_TILE_SIZE = 1000
 export const WORLD_TILES = 2048
 export const WORLD_PIXEL_SIZE = WORLD_TILE_SIZE * WORLD_TILES
 
-// === Favoriote Locations ===
-export const FAVORITE_LOCATIONS_POSITIONS: Position[] = []
-export const FAVORITE_LOCATIONS: Me['favoriteLocations'] = []
-let lastId = Date.now()
 /** Web mercator, the projection wplace's map uses */
 export function worldToLatitude(y: number) {
   return (
@@ -55,25 +51,6 @@ export function pixelSizeForZoom(zoom: number) {
 export function zoomForPixelSize(pixelSize: number) {
   return Math.log2((pixelSize * WORLD_PIXEL_SIZE) / 512)
 }
-
-export function addFavoriteLocation(position: Position) {
-  FAVORITE_LOCATIONS_POSITIONS.push(position)
-  FAVORITE_LOCATIONS.push({
-    id: lastId++,
-    latitude: worldToLatitude(position.y),
-    longitude: worldToLongitude(position.x),
-    name: 'WBOT_FAVORITE',
-  })
-}
-
-addFavoriteLocation({
-  x: (WORLD_PIXEL_SIZE / 3) | 0,
-  y: (WORLD_PIXEL_SIZE / 3) | 0,
-})
-addFavoriteLocation({
-  x: ((WORLD_PIXEL_SIZE / 3) * 2) | 0,
-  y: ((WORLD_PIXEL_SIZE / 3) * 2) | 0,
-})
 
 export class WorldPosition {
   public static fromJSON(

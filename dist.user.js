@@ -486,9 +486,6 @@ var widget_default = `<button class="open-button">
 var WORLD_TILE_SIZE = 1000;
 var WORLD_TILES = 2048;
 var WORLD_PIXEL_SIZE = WORLD_TILE_SIZE * WORLD_TILES;
-var FAVORITE_LOCATIONS_POSITIONS = [];
-var FAVORITE_LOCATIONS = [];
-var lastId = Date.now();
 function worldToLatitude(y) {
   return (2 * Math.atan(Math.exp(-(y / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI))) - Math.PI / 2) * 180 / Math.PI;
 }
@@ -507,23 +504,6 @@ function pixelSizeForZoom(zoom) {
 function zoomForPixelSize(pixelSize) {
   return Math.log2(pixelSize * WORLD_PIXEL_SIZE / 512);
 }
-function addFavoriteLocation(position) {
-  FAVORITE_LOCATIONS_POSITIONS.push(position);
-  FAVORITE_LOCATIONS.push({
-    id: lastId++,
-    latitude: worldToLatitude(position.y),
-    longitude: worldToLongitude(position.x),
-    name: "WBOT_FAVORITE"
-  });
-}
-addFavoriteLocation({
-  x: WORLD_PIXEL_SIZE / 3 | 0,
-  y: WORLD_PIXEL_SIZE / 3 | 0
-});
-addFavoriteLocation({
-  x: WORLD_PIXEL_SIZE / 3 * 2 | 0,
-  y: WORLD_PIXEL_SIZE / 3 * 2 | 0
-});
 
 class WorldPosition {
   bot;
@@ -1695,32 +1675,6 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
   var WORLD_TILE_SIZE = 1000;
   var WORLD_TILES = 2048;
   var WORLD_PIXEL_SIZE = WORLD_TILE_SIZE * WORLD_TILES;
-  var FAVORITE_LOCATIONS_POSITIONS = [];
-  var FAVORITE_LOCATIONS = [];
-  var lastId = Date.now();
-  function worldToLatitude(y) {
-    return (2 * Math.atan(Math.exp(-(y / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI))) - Math.PI / 2) * 180 / Math.PI;
-  }
-  function worldToLongitude(x) {
-    return (x / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI) * 180 / Math.PI;
-  }
-  function addFavoriteLocation(position) {
-    FAVORITE_LOCATIONS_POSITIONS.push(position);
-    FAVORITE_LOCATIONS.push({
-      id: lastId++,
-      latitude: worldToLatitude(position.y),
-      longitude: worldToLongitude(position.x),
-      name: "WBOT_FAVORITE"
-    });
-  }
-  addFavoriteLocation({
-    x: WORLD_PIXEL_SIZE / 3 | 0,
-    y: WORLD_PIXEL_SIZE / 3 | 0
-  });
-  addFavoriteLocation({
-    x: WORLD_PIXEL_SIZE / 3 * 2 | 0,
-    y: WORLD_PIXEL_SIZE / 3 * 2 | 0
-  });
 
   // src/worker.ts
   self.onmessage = async (e) => {
@@ -2760,20 +2714,6 @@ var style_default = `/* stylelint-disable declaration-no-important */
   --main-hover: #48a19a;
 }
 
-/**
- * Hide our injected favorite location markers.
- * \`of S\` is required: plain :nth-child() counts among ALL siblings of the
- * canvas container, where the markers are never the first children.
- */
-:nth-child(
-  -n
-    + FAKE_FAVORITE_LOCATIONS
-    of
-    .text-yellow-400.cursor-pointer.z-10.maplibregl-marker.maplibregl-marker-anchor-center
-) {
-  display: none !important;
-}
-
 /** LOCAL STYLES */
 
 /** Widget */
@@ -3211,17 +3151,6 @@ class WPlaceBot {
   paintResolver;
   constructor(save2) {
     if (save2) {
-      for (let index = 0;index < save2.images.length; index++) {
-        const image = save2.images[index];
-        addFavoriteLocation({
-          x: image.position[0] - 1000,
-          y: image.position[1] - 1000
-        });
-        addFavoriteLocation({
-          x: image.position[0] + 1000,
-          y: image.position[1] + 1000
-        });
-      }
       this.strategy = save2.strategy;
       this.dropletStrategy = save2.dropletStrategy;
       this.title = save2.title;
@@ -3230,14 +3159,9 @@ class WPlaceBot {
     }
     const known = new Set(save2?.images.map((image) => image.wplaceId));
     const newTemplates = readSiteTemplates().filter((template) => !known.has(template.id));
-    for (let index = 0;index < newTemplates.length; index++) {
-      const [x, y] = newTemplates[index].data.position;
-      addFavoriteLocation({ x: x - 1000, y: y - 1000 });
-      addFavoriteLocation({ x: x + 1000, y: y + 1000 });
-    }
     this.registerFetchInterceptor();
     const style = document.createElement("style");
-    style.textContent = obfuscateCSS(style_default.replace("FAKE_FAVORITE_LOCATIONS", FAVORITE_LOCATIONS.length.toString()));
+    style.textContent = obfuscateCSS(style_default);
     document.head.append(style);
     this.widget.run("Initializing", async (progress) => {
       await this.waitForElement(".avatar.center-absolute.absolute");
@@ -3606,11 +3530,6 @@ Developer will try to fix your save. Be vary that github issues are public, and 
     }
     if (templates.size !== 0) {
       const fresh = [...templates].map(([id, data]) => ({ id, data }));
-      for (let index = 0;index < fresh.length; index++) {
-        const [x, y] = fresh[index].data.position;
-        addFavoriteLocation({ x: x - 1000, y: y - 1000 });
-        addFavoriteLocation({ x: x + 1000, y: y + 1000 });
-      }
       await this.importSiteTemplates(fresh);
       changed = true;
     }
@@ -3756,9 +3675,6 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       if (response.url === "https://backend.wplace.live/me") {
         this.me = await cloned.json();
         this.lastMeAt = Date.now();
-        this.me.favoriteLocations.unshift(...FAVORITE_LOCATIONS);
-        this.me.maxFavoriteLocations = Infinity;
-        response.json = () => Promise.resolve(this.me);
       }
       const pixelMatch = pixelRegExp.exec(url);
       if (pixelMatch) {

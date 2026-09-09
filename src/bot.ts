@@ -17,8 +17,6 @@ import {
 import { BotStrategy, DropletStrategy, Widget } from './widget'
 import { workerClearMapCache } from './worker-client'
 import {
-  addFavoriteLocation,
-  FAVORITE_LOCATIONS,
   type Position,
   WorldPosition,
   zoomForPixelSize,
@@ -123,18 +121,6 @@ export class WPlaceBot {
   public constructor(save?: Awaited<ReturnType<WPlaceBot['toJSON']>>) {
     // Preinit save data before page has loaded
     if (save) {
-      for (let index = 0; index < save.images.length; index++) {
-        const image = save.images[index]!
-        addFavoriteLocation({
-          x: image.position[0] - 1000,
-          y: image.position[1] - 1000,
-        })
-        addFavoriteLocation({
-          x: image.position[0] + 1000,
-          y: image.position[1] + 1000,
-        })
-      }
-
       this.strategy = save.strategy
       this.dropletStrategy = save.dropletStrategy
       this.title = save.title
@@ -142,28 +128,17 @@ export class WPlaceBot {
       this.title = 'WPlace-bot'
     }
 
-    // Templates placed in wplace's own manager that aren't in the save yet.
-    // Read here, before the interceptor, so their anchors reach /me.
+    // Templates placed in wplace's own manager that aren't in the save yet
     const known = new Set(save?.images.map((image) => image.wplaceId))
     const newTemplates = readSiteTemplates().filter(
       (template) => !known.has(template.id),
     )
-    for (let index = 0; index < newTemplates.length; index++) {
-      const [x, y] = newTemplates[index]!.data.position
-      addFavoriteLocation({ x: x - 1000, y: y - 1000 })
-      addFavoriteLocation({ x: x + 1000, y: y + 1000 })
-    }
 
     this.registerFetchInterceptor()
 
     // Embed styles
     const style = document.createElement('style')
-    style.textContent = obfuscateCSS(
-      (css as string).replace(
-        'FAKE_FAVORITE_LOCATIONS',
-        FAVORITE_LOCATIONS.length.toString(),
-      ),
-    )
+    style.textContent = obfuscateCSS(css as string)
     document.head.append(style)
 
     void this.widget
@@ -710,15 +685,7 @@ export class WPlaceBot {
       }
     }
     if (templates.size !== 0) {
-      // Anchors for these only reach the map with the next /me, which wplace
-      // sends after a server-confirmed action. Until then they position off
-      // the existing ones, which measured under 0.1 map pixels of drift.
       const fresh = [...templates].map(([id, data]) => ({ id, data }))
-      for (let index = 0; index < fresh.length; index++) {
-        const [x, y] = fresh[index]!.data.position
-        addFavoriteLocation({ x: x - 1000, y: y - 1000 })
-        addFavoriteLocation({ x: x + 1000, y: y + 1000 })
-      }
       await this.importSiteTemplates(fresh)
       changed = true
     }
@@ -940,9 +907,6 @@ export class WPlaceBot {
       if (response.url === 'https://backend.wplace.live/me') {
         this.me = (await cloned.json()) as Me
         this.lastMeAt = Date.now()
-        this.me.favoriteLocations.unshift(...FAVORITE_LOCATIONS)
-        this.me.maxFavoriteLocations = Infinity
-        response.json = () => Promise.resolve(this.me)
       }
       const pixelMatch = pixelRegExp.exec(url)
       if (pixelMatch) {
