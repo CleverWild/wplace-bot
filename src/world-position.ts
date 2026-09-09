@@ -43,6 +43,19 @@ export function longitudeToWorld(longitude: number) {
   )
 }
 
+/**
+ * Screen pixels one map pixel takes at this zoom. maplibre lays the world out
+ * in 512px tiles, wplace in 2048 tiles of 1000px, so the two scales meet here.
+ */
+export function pixelSizeForZoom(zoom: number) {
+  return (512 * 2 ** zoom) / WORLD_PIXEL_SIZE
+}
+
+/** Zoom at which one map pixel takes `pixelSize` screen pixels */
+export function zoomForPixelSize(pixelSize: number) {
+  return Math.log2((pixelSize * WORLD_PIXEL_SIZE) / 512)
+}
+
 export function addFavoriteLocation(position: Position) {
   FAVORITE_LOCATIONS_POSITIONS.push(position)
   FAVORITE_LOCATIONS.push({
