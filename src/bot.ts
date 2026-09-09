@@ -21,6 +21,7 @@ import {
   FAVORITE_LOCATIONS,
   type Position,
   WorldPosition,
+  zoomForPixelSize,
 } from './world-position'
 import {
   OVERLAYS_KEY,
@@ -275,6 +276,7 @@ export class WPlaceBot {
         globalThis.addEventListener('mousemove', prevent, true)
         $canvas.addEventListener('wheel', prevent, true)
 
+        this.zoomIn(4)
         await this.widget.run('Loading', (progress) =>
           Promise.all([
             this.updateColorsData().then(async () => {
@@ -286,7 +288,6 @@ export class WPlaceBot {
                   progress(index * batchSize + p * batchSize)
                 })
             }),
-            this.zoomIn(4, $canvas),
             fetch('https://backend.wplace.live/me', {
               credentials: 'include',
             })
@@ -831,27 +832,11 @@ export class WPlaceBot {
     return true
   }
 
-  /** Move map */
+  /** Scroll the map by a screen-space delta */
   public moveMap(delta: Position) {
-    const canvas = document.querySelector('.maplibregl-canvas')!
-    const startX = window.innerWidth / 2
-    const startY = window.innerHeight / 2
-    const endX = startX - delta.x
-    const endY = startY - delta.y
-    function fire(type: string, x: number, y: number) {
-      canvas.dispatchEvent(
-        new MouseEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          clientX: x,
-          clientY: y,
-          buttons: 1,
-        }),
-      )
-    }
-    fire('mousedown', startX, startY)
-    fire('mousemove', endX, endY)
-    fire('mouseup', endX, endY)
+    // panBy moves the camera, so the content shifts by -delta, which is what
+    // the old synthetic drag did too
+    this.map.panBy([delta.x, delta.y], { duration: 0 })
   }
 
   /** Close drawing on focus to not consume space */
@@ -922,28 +907,10 @@ export class WPlaceBot {
     })
   }
 
-  /** Zoom in canvas */
-  protected async zoomIn(
-    zoom: number,
-    canvas = document.querySelector<HTMLDivElement>('.maplibregl-canvas')!,
-  ) {
-    const position = this.images[0]!.position
-    if (position.pixelSize >= zoom) return
-    const event = new WheelEvent('wheel', {
-      deltaY: -10,
-      clientX: canvas.clientWidth / 2,
-      clientY: canvas.clientHeight / 2,
-      bubbles: true,
-      shiftKey: true,
-    })
-    return new Promise<void>((resolve) => {
-      function scroll() {
-        if (position.pixelSize >= zoom) resolve()
-        else requestAnimationFrame(scroll)
-        canvas.dispatchEvent(event)
-      }
-      scroll()
-    })
+  /** Zoom in until one map pixel is at least `pixelSize` screen pixels */
+  protected zoomIn(pixelSize: number) {
+    const zoom = zoomForPixelSize(pixelSize)
+    if (this.map.getZoom() < zoom) this.map.jumpTo({ zoom })
   }
 
   /** Start listening to fetch requests */

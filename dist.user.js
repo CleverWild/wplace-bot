@@ -504,6 +504,9 @@ function longitudeToWorld(longitude) {
 function pixelSizeForZoom(zoom) {
   return 512 * 2 ** zoom / WORLD_PIXEL_SIZE;
 }
+function zoomForPixelSize(pixelSize) {
+  return Math.log2(pixelSize * WORLD_PIXEL_SIZE / 512);
+}
 function addFavoriteLocation(position) {
   FAVORITE_LOCATIONS_POSITIONS.push(position);
   FAVORITE_LOCATIONS.push({
@@ -3310,6 +3313,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       this.drawing = true;
       globalThis.addEventListener("mousemove", prevent, true);
       $canvas.addEventListener("wheel", prevent, true);
+      this.zoomIn(4);
       await this.widget.run("Loading", (progress2) => Promise.all([
         this.updateColorsData().then(async () => {
           workerClearMapCache();
@@ -3320,7 +3324,6 @@ Developer will try to fix your save. Be vary that github issues are public, and 
               progress2(index * batchSize + p * batchSize);
             });
         }),
-        this.zoomIn(4, $canvas),
         fetch("https://backend.wplace.live/me", {
           credentials: "include"
         }).then((x) => x.json()).then((x) => {
@@ -3677,23 +3680,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
     return true;
   }
   moveMap(delta) {
-    const canvas = document.querySelector(".maplibregl-canvas");
-    const startX = window.innerWidth / 2;
-    const startY = window.innerHeight / 2;
-    const endX = startX - delta.x;
-    const endY = startY - delta.y;
-    function fire(type, x, y) {
-      canvas.dispatchEvent(new MouseEvent(type, {
-        bubbles: true,
-        cancelable: true,
-        clientX: x,
-        clientY: y,
-        buttons: 1
-      }));
-    }
-    fire("mousedown", startX, startY);
-    fire("mousemove", endX, endY);
-    fire("mouseup", endX, endY);
+    this.map.panBy([delta.x, delta.y], { duration: 0 });
   }
   fixSpaceInInput(input) {
     input.addEventListener("focus", () => this.closeAll());
@@ -3738,27 +3725,10 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       });
     });
   }
-  async zoomIn(zoom, canvas = document.querySelector(".maplibregl-canvas")) {
-    const position = this.images[0].position;
-    if (position.pixelSize >= zoom)
-      return;
-    const event = new WheelEvent("wheel", {
-      deltaY: -10,
-      clientX: canvas.clientWidth / 2,
-      clientY: canvas.clientHeight / 2,
-      bubbles: true,
-      shiftKey: true
-    });
-    return new Promise((resolve) => {
-      function scroll() {
-        if (position.pixelSize >= zoom)
-          resolve();
-        else
-          requestAnimationFrame(scroll);
-        canvas.dispatchEvent(event);
-      }
-      scroll();
-    });
+  zoomIn(pixelSize) {
+    const zoom = zoomForPixelSize(pixelSize);
+    if (this.map.getZoom() < zoom)
+      this.map.jumpTo({ zoom });
   }
   registerFetchInterceptor() {
     const originalFetch = globalThis.fetch;
