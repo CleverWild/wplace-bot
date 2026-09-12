@@ -2,6 +2,7 @@ import { promisifyEventSource, swap } from '@softsky/utils'
 
 import { Base } from './base'
 import { WPlaceBot } from './bot'
+import { type BotStrategy, type DropletStrategy } from './drawing/policy'
 import { NoImageError, WPlaceBotError } from './errors'
 import { BotImage, etaText } from './image'
 import {
@@ -13,29 +14,12 @@ import {
   SID,
   toggleClass,
 } from './obfuscator'
-import { migrateImage, save } from './save'
+import { migrateImage } from './persistence/migrations'
+import { save } from './save'
 import { formatPercent } from './utils'
 // @ts-ignore
 import html from './widget.html' with { type: 'text' }
 import { fromWplaceFile } from './wplace-file'
-
-export enum BotStrategy {
-  ALL = 'ALL',
-  PERCENTAGE = 'PERCENTAGE',
-  SEQUENTIAL = 'SEQUENTIAL',
-}
-
-/**
- * What the one droplet balance is spent on. There is no "charges only": an
- * image that should not eat the balance on colors says so itself, through its
- * own `UnownedColorStrategy`
- */
-export enum DropletStrategy {
-  /** Colors only, as wplace-bot always did. Charges are never bought */
-  COLORS = 'COLORS',
-  /** Save up for a needed color first, buy charges the rest of the time */
-  COLORS_FIRST = 'COLORS_FIRST',
-}
 
 /** Widget UI with buttons */
 export class Widget extends Base {
@@ -151,11 +135,7 @@ export class Widget extends Base {
         } else if (file.name.endsWith('.wbot')) {
           await BotImage.fromJSON(
             this.bot,
-            migrateImage(
-              JSON.parse(await file.text()) as Awaited<
-                ReturnType<BotImage['toJSON']>
-              >,
-            ),
+            migrateImage(JSON.parse(await file.text()) as unknown),
           )
         } else {
           const reader = new FileReader()

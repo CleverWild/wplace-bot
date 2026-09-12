@@ -1,10 +1,9 @@
-import { type BotImage } from './image'
 import {
   latitudeToWorld,
   longitudeToWorld,
   worldToLatitude,
   worldToLongitude,
-} from './world-position'
+} from './coordinates'
 
 /**
  * wplace.live's own template format, as exported by its template manager.
@@ -46,6 +45,20 @@ export type SiteTemplateData = {
   lock?: boolean
   disabled: boolean
   name?: string
+}
+
+/** An image as it goes into a template, its quantized canvas as `dataUrl` */
+export type WplaceExport = {
+  dataUrl: string
+  globalX: number
+  globalY: number
+  width: number
+  height: number
+  name: string
+  /** 0-100, as the image stores it */
+  opacity: number
+  lock: boolean
+  visible: boolean
 }
 
 /** Everything a template says about itself except the image */
@@ -170,15 +183,15 @@ export async function readSiteTemplateImage(id: string) {
  * Exports the quantized canvas, so it is already at map scale and needs no
  * resampling on their side.
  */
-export function toWplaceFile(image: BotImage, order = 0): WplaceFile {
-  const { globalX, globalY } = image.position
+export function toWplaceFile(image: WplaceExport, order = 0): WplaceFile {
+  const { globalX, globalY } = image
   return {
     id: crypto.randomUUID(),
     schemaVersion: '1',
     name: image.name,
     opacity: image.opacity / 100,
     image: {
-      dataUrl: image.$canvas.toDataURL('image/png'),
+      dataUrl: image.dataUrl,
       width: image.width,
       height: image.height,
     },

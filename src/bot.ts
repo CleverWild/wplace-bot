@@ -1,9 +1,17 @@
 import { wait } from '@softsky/utils'
 
-import { BotImage, UnownedColorStrategy } from './image'
+import { BotStrategy, DropletStrategy } from './drawing/policy'
+import { BotImage } from './image'
+import { UnownedColorStrategy } from './image/model'
 import { findMap, type WplaceMap } from './map'
 import { obfuscateCSS } from './obfuscator'
-import { DELETE_ALL_DATA, loadSave, save, SAVE_VERSION } from './save'
+import {
+  type LoadedBot,
+  SAVE_VERSION,
+  type SavedBot,
+} from './persistence/schema'
+import { deleteAllData } from './persistence/store'
+import { loadSave, save } from './save'
 // @ts-ignore
 import css from './style.css' with { type: 'text' }
 import {
@@ -14,7 +22,7 @@ import {
   DROPLETS_PER_PACK,
   DROPLETS_PER_PIXEL,
 } from './utils'
-import { BotStrategy, DropletStrategy, Widget } from './widget'
+import { Widget } from './widget'
 import { workerClearMapCache } from './worker-client'
 import {
   type Position,
@@ -118,7 +126,7 @@ export class WPlaceBot {
   /** Answers the one batched paint request the running draw() sent */
   protected paintResolver?: (painted: number | undefined) => void
 
-  public constructor(save?: Awaited<ReturnType<WPlaceBot['toJSON']>>) {
+  public constructor(save?: LoadedBot) {
     // Preinit save data before page has loaded
     if (save) {
       this.strategy = save.strategy
@@ -201,9 +209,9 @@ export class WPlaceBot {
             window.alert(
               'Wplace-Bot-Broken-Save.txt is your broken save. If you ACTUALLY need data from this save, create issue on https://github.com/SoundOfTheSky/wplace-bot/issues\n\nDeveloper will try to fix your save. Be vary that github issues are public, and save file contains your images and their positions in world.',
             )
-            DELETE_ALL_DATA()
+            await deleteAllData()
           } catch {
-            DELETE_ALL_DATA()
+            await deleteAllData().catch(() => undefined)
           } finally {
             document.location.reload()
           }
@@ -595,7 +603,7 @@ export class WPlaceBot {
   }
 
   /** Serialize bot */
-  public async toJSON() {
+  public async toJSON(): Promise<SavedBot> {
     return {
       version: SAVE_VERSION,
       images: await Promise.all(this.images.map((x) => x.toJSON())),

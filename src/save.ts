@@ -1,73 +1,15 @@
-/* eslint-disable @typescript-eslint/no-unsafe-return */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
+import { migrate } from './persistence/migrations'
+import { SaveQueue } from './persistence/save-queue'
+import { type LoadedBot, type SavedBot } from './persistence/schema'
+import { idbGet, idbSet, SAVE_KEY } from './persistence/store'
 
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/prefer-promise-reject-errors */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-
-import { WPlaceBot } from './bot'
-import { BotImage, UnownedColorStrategy } from './image'
-import { FillDirection, ImageStrategy, RegionOrder } from './ordering'
-import { DropletStrategy } from './widget'
-
-const DB_NAME = 'wbot'
-const STORE_NAME = 'saves'
-const KEY_NAME = 'wbot'
-const DB_VERSION = 1
-export const SAVE_VERSION = 8
-
-const dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
-  const request = indexedDB.open(DB_NAME, DB_VERSION)
-  request.onupgradeneeded = () => {
-    const db = request.result
-    if (!db.objectStoreNames.contains(STORE_NAME))
-      db.createObjectStore(STORE_NAME)
-  }
-  request.onsuccess = () => {
-    resolve(request.result)
-  }
-  request.onerror = () => {
-    reject(request.error)
-  }
-})
-
-export async function idbGet<T>(key: string): Promise<T | undefined> {
-  const db = await dbPromise
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly')
-    const request = tx.objectStore(STORE_NAME).get(key)
-    request.onsuccess = () => {
-      resolve(request.result as T | undefined)
-    }
-    request.onerror = () => {
-      reject(request.error)
-    }
-  })
-}
-
-export async function idbSet(key: string, value: unknown): Promise<void> {
-  const db = await dbPromise
-  const tx = db.transaction(STORE_NAME, 'readwrite')
-  tx.objectStore(STORE_NAME).put(value, key)
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => {
-      resolve()
-    }
-    tx.onerror = () => {
-      reject(tx.error)
-    }
-  })
-}
-
-export function DELETE_ALL_DATA() {
-  indexedDB.deleteDatabase(DB_NAME)
-}
+const queue = new SaveQueue<SavedBot>((data) => idbSet(SAVE_KEY, data))
 
 /** Loads a save and returns JSON */
-export async function loadSave() {
+export async function loadSave(): Promise<LoadedBot | undefined> {
   try {
     await migrateSaveFromLS()
-    const raw = await idbGet<ReturnType<WPlaceBot['toJSON']> | null>(KEY_NAME)
+    const raw = await idbGet<unknown>(SAVE_KEY)
     if (typeof raw !== 'object' || raw === null) return
     return migrate(raw)
   } catch {
@@ -75,18 +17,12 @@ export async function loadSave() {
   }
 }
 
-let saveTimeout: ReturnType<typeof setTimeout> | undefined
 /** Make save. Actually makes save only after 1 second */
-export async function save(bot: WPlaceBot, immediate = false) {
-  clearTimeout(saveTimeout)
-  if (immediate) await idbSet(KEY_NAME, await bot.toJSON())
-  else
-    await new Promise<void>((resolve) => {
-      saveTimeout = setTimeout(async () => {
-        await idbSet(KEY_NAME, await bot.toJSON())
-        resolve()
-      }, 1000)
-    })
+export function save(
+  bot: { toJSON(): Promise<SavedBot> },
+  immediate = false,
+): Promise<void> {
+  return queue.save(() => bot.toJSON(), immediate)
 }
 
 /** Migrates save from local storage */
@@ -94,110 +30,18 @@ async function migrateSaveFromLS() {
   let legacyKey = ''
   for (let index = 0; index < localStorage.length; index++) {
     legacyKey = localStorage.key(index)!
-    if (legacyKey.endsWith(KEY_NAME)) break
+    if (legacyKey.endsWith(SAVE_KEY)) break
   }
-  if (legacyKey.endsWith(KEY_NAME)) {
+  if (legacyKey.endsWith(SAVE_KEY)) {
     const json = localStorage.getItem(legacyKey)
     if (json) {
       try {
-        const parsed = JSON.parse(json)
-        if (typeof parsed === 'object') await idbSet(KEY_NAME, parsed)
+        const parsed = JSON.parse(json) as unknown
+        if (typeof parsed === 'object') await idbSet(SAVE_KEY, parsed)
       } catch {
         // ignore corrupt legacy data
       }
     }
     localStorage.removeItem(legacyKey)
-  }
-}
-
-/** How to migrate save data for images */
-export function migrateImage(
-  old: any,
-): Awaited<ReturnType<BotImage['toJSON']>> {
-  let image = old
-  if (!image.version || image.version < 3)
-    image = {
-      url: image.pixels.url,
-      width: image.pixels.width,
-      height: undefined,
-      brightness: image.pixels.brightness,
-      colorMetric: 'lab' as const,
-      position: image.position,
-      strategy: ImageStrategy.SPIRAL_TO_CENTER,
-      opacity: image.opacity,
-      drawTransparentPixels: image.drawTransparentPixels,
-      drawColorsInOrder: image.drawColorsInOrder,
-      colors: [],
-      disabledColors: [],
-      lock: image.lock,
-      disabled: false,
-      name: `Unnamed image`,
-      unownedColorStrategy: UnownedColorStrategy.BUY,
-      wplaceId: undefined,
-      version: 3,
-    }
-  // `disabled` used to hold the site's visibility for imported templates.
-  // It is the user's own switch now, so hand the old value to `siteDisabled`
-  if (image.version < 4)
-    image = {
-      ...image,
-      disabled: image.wplaceId ? false : Boolean(image.disabled),
-      siteDisabled: image.wplaceId ? Boolean(image.disabled) : false,
-      version: 4,
-    }
-  if (image.version < 5)
-    image = {
-      ...image,
-      floodFill: false,
-      regionOrder: 'NONE',
-      fillDirection: FillDirection.SEED_OUT,
-      outlineFirst: false,
-      version: 5,
-    }
-  // The fill used to be a checkbox beside the order, now the order owns it
-  if (image.version < 6) {
-    const { floodFill, ...rest } = image
-    image = {
-      ...rest,
-      regionOrder: floodFill
-        ? rest.regionOrder === 'NONE'
-          ? RegionOrder.IN_ORDER
-          : rest.regionOrder
-        : RegionOrder.OFF,
-      version: 6,
-    }
-  }
-  return image
-}
-
-/** How to migrate save data */
-export function migrate(old: any): Awaited<ReturnType<WPlaceBot['toJSON']>> {
-  let save = old
-  if (!save.version || save.version < 3)
-    save = {
-      version: 3,
-      images: save.images,
-      strategy: save.strategy,
-      title: 'WPlace-bot',
-    }
-  // Droplets used to go to colors only, and that stays the default
-  if (save.version < 7)
-    save = { ...save, dropletStrategy: DropletStrategy.COLORS, version: 7 }
-  // "Charges only" is gone. Colors first keeps buying charges, and an image
-  // that should never spend the balance on a color now says so on its own
-  if (save.version < 8)
-    save = {
-      ...save,
-      dropletStrategy:
-        save.dropletStrategy === 'CHARGES'
-          ? DropletStrategy.COLORS_FIRST
-          : save.dropletStrategy,
-      version: 8,
-    }
-  // Images carry their own version, so migrate them whatever the save says
-  return {
-    ...save,
-    version: SAVE_VERSION,
-    images: save.images.map(migrateImage),
   }
 }

@@ -1,12 +1,14 @@
-import {
-  promisifyEventSource,
-  removeFromArray,
-  type RequiredKey,
-} from '@softsky/utils'
+import { promisifyEventSource, removeFromArray } from '@softsky/utils'
 
 import { Base } from './base'
 import { WPlaceBot } from './bot'
 import { type ColorMetric, COLORS, COLORS_RGB, colorToCSS } from './colors'
+import {
+  createImageSettings,
+  type ImageSettings,
+  type PixelColorStat,
+  UnownedColorStrategy,
+} from './image/model'
 // @ts-ignore
 import html from './image.html' with { type: 'text' }
 import {
@@ -24,7 +26,12 @@ import {
   RegionOrder,
   sortColorsByAmount,
 } from './ordering'
-import { save, SAVE_VERSION } from './save'
+import {
+  type LoadedImage,
+  SAVE_VERSION,
+  type SavedImage,
+} from './persistence/schema'
+import { save } from './save'
 import { estimateEtaMinutes, formatEta, formatPercent } from './utils'
 import { workerPixels } from './worker-client'
 import { WorldPosition } from './world-position'
@@ -38,19 +45,6 @@ export type DrawTask = {
 export type ImageColorSetting = {
   color: number
   disabled?: boolean
-}
-
-export type PixelColorStat = {
-  color: number
-  amount: number
-  left: number
-  realColor: number
-}
-
-export enum UnownedColorStrategy {
-  BUY = 'BUY',
-  SKIP = 'SKIP',
-  SUBSTITUTE = 'SUBSTITUTE',
 }
 
 /**
@@ -74,7 +68,7 @@ export function etaText(bot: WPlaceBot, remaining: number): string {
 export class BotImage extends Base {
   public static async fromJSON(
     bot: WPlaceBot,
-    data: RequiredKey<Partial<Awaited<ReturnType<BotImage['toJSON']>>>, 'url'>,
+    data: LoadedImage,
     progress?: (p: number) => void,
   ) {
     const image = new Image()
@@ -89,30 +83,11 @@ export class BotImage extends Base {
     const ctx = canvas.getContext('2d')!
     ctx.imageSmoothingEnabled = false
     ctx.drawImage(image, 0, 0)
-    const botImage = new BotImage(
-      bot,
-      data.position ? WorldPosition.fromJSON(bot, data.position) : undefined,
-      canvas,
-      data.width,
-      data.height,
-      data.brightness,
-      data.colorMetric,
-      data.strategy,
-      data.opacity,
-      data.drawTransparentPixels,
-      data.drawColorsInOrder,
-      data.colors,
-      new Set(data.disabledColors),
-      data.lock,
-      data.disabled,
-      data.name,
-      data.unownedColorStrategy,
-      data.wplaceId,
-      data.siteDisabled,
-      data.regionOrder,
-      data.fillDirection,
-      data.outlineFirst,
-    )
+    const botImage = new BotImage(bot, canvas, {
+      ...data,
+      disabledColors: data.disabledColors && new Set(data.disabledColors),
+      position: data.position && WorldPosition.fromJSON(bot, data.position),
+    })
     await botImage.updatePixels(progress)
     return botImage
   }
@@ -188,62 +163,64 @@ export class BotImage extends Base {
   protected readonly $openSettings!: HTMLButtonElement
   protected readonly $dialog!: HTMLDialogElement
 
+  public position: WorldPosition
+  public width: number
+  public heightOverride?: number
+  public brightness: number
+  public colorMetric: ColorMetric
+  public strategy: ImageStrategy
+  public opacity: number
+  public drawTransparentPixels: boolean
+  public drawColorsInOrder: boolean
+  public colors: number[]
+  public disabledColors: Set<number>
+  public lock: boolean
+  public disabled: boolean
+  public name: string
+  public unownedColorStrategy: UnownedColorStrategy
+  public readonly wplaceId?: string
+  public siteDisabled: boolean
+  public regionOrder: RegionOrder
+  public fillDirection: FillDirection
+  public outlineFirst: boolean
+
   public constructor(
     protected bot: WPlaceBot,
-    /** Top-left corner of image */
-    public position = WorldPosition.fromScreenPosition(bot, {
-      x: 256,
-      y: 32,
-    }),
-    /** Source image */
     public readonly image: OffscreenCanvas,
-    /** Width of drawn image */
-    public width = image.width,
-    /** Independent drawn height. Unset follows the source aspect ratio */
-    public heightOverride?: number,
-    /** Brightness of image */
-    public brightness = 0,
-    /** How colors are matched. Defaults to what wplace itself defaults to */
-    public colorMetric: ColorMetric = 'lab',
-    /** Order of pixels to draw */
-    public strategy = ImageStrategy.SPIRAL_TO_CENTER,
-    /** Opacity of overlay */
-    public opacity = 50,
-    /** Should we erase pixels there transparency should be */
-    public drawTransparentPixels = false,
-    /** Should bot draw colors in order */
-    public drawColorsInOrder = true,
-    /** Colors order */
-    public colors: number[] = [],
-    /** Colors not to draw */
-    public disabledColors = new Set<number>(),
-    /** Stop accidental image edit */
-    public lock = false,
-    /** Disable this image from drawing and from counting toward totals */
-    public disabled = false,
-    /** Name of image */
-    public name = `${image.width}x${image.height}`,
-    /** What to do with colors that user does not own */
-    public unownedColorStrategy = UnownedColorStrategy.BUY,
-    /**
-     * Id of the wplace template this image mirrors.
-     * The site owns everything it covers, so those controls are taken away
-     * from the user and overwritten whenever the template changes.
-     */
-    public readonly wplaceId?: string,
-    /**
-     * Visibility as the site last reported it. Kept apart from `disabled` so
-     * switching a template off here is not undone by the next sync.
-     */
-    public siteDisabled = false,
-    /** Whether blobs are filled in one at a time, and which one goes first */
-    public regionOrder = RegionOrder.OFF,
-    /** How a single blob is filled in */
-    public fillDirection = FillDirection.SEED_OUT,
-    /** The silhouette before everything it encloses */
-    public outlineFirst = false,
+    {
+      position,
+      ...overrides
+    }: Partial<ImageSettings> & {
+      position?: WorldPosition
+    } = {},
   ) {
     super()
+    const settings = createImageSettings({
+      width: image.width,
+      name: `${image.width}x${image.height}`,
+      ...overrides,
+    })
+    this.position =
+      position ?? WorldPosition.fromScreenPosition(bot, { x: 256, y: 32 })
+    this.width = settings.width
+    this.heightOverride = settings.height
+    this.brightness = settings.brightness
+    this.colorMetric = settings.colorMetric
+    this.strategy = settings.strategy
+    this.opacity = settings.opacity
+    this.drawTransparentPixels = settings.drawTransparentPixels
+    this.drawColorsInOrder = settings.drawColorsInOrder
+    this.colors = settings.colors
+    this.disabledColors = settings.disabledColors
+    this.lock = settings.lock
+    this.disabled = settings.disabled
+    this.name = settings.name
+    this.unownedColorStrategy = settings.unownedColorStrategy
+    this.wplaceId = settings.wplaceId
+    this.siteDisabled = settings.siteDisabled
+    this.regionOrder = settings.regionOrder
+    this.fillDirection = settings.fillDirection
+    this.outlineFirst = settings.outlineFirst
     this.bot.images.push(this)
     this.resolution = image.width / image.height
     this.imageData = this.image
@@ -476,7 +453,7 @@ export class BotImage extends Base {
         $resize.addEventListener('mousedown', this.resizeStart.bind(this))
   }
 
-  public async toJSON() {
+  public async toJSON(): Promise<SavedImage> {
     const blob = await this.image.convertToBlob({
       type: 'image/webp',
       quality: 1,
@@ -895,7 +872,22 @@ export class BotImage extends Base {
     switch (format) {
       case 'wplace': {
         download(
-          json(toWplaceFile(this, this.bot.images.indexOf(this))),
+          json(
+            toWplaceFile(
+              {
+                dataUrl: this.$canvas.toDataURL('image/png'),
+                globalX: this.position.globalX,
+                globalY: this.position.globalY,
+                width: this.width,
+                height: this.height,
+                name: this.name,
+                opacity: this.opacity,
+                lock: this.lock,
+                visible: this.visible,
+              },
+              this.bot.images.indexOf(this),
+            ),
+          ),
           `${this.name}.wplace`,
         )
         break

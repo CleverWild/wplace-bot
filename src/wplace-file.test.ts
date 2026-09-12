@@ -1,6 +1,5 @@
 import { expect, test } from 'bun:test'
 
-import { type BotImage } from './image'
 import { worldToLatitude, worldToLongitude } from './world-position'
 import { fromWplaceFile, readSiteTemplates, toWplaceFile } from './wplace-file'
 
@@ -56,17 +55,17 @@ test('rejects a file without bounds', () => {
 })
 
 test('export round-trips back to the same pixels', () => {
-  const image = {
-    $canvas: { toDataURL: () => 'data:image/png;base64,x' },
-    position: { globalX: 1_078_206, globalY: 704_428 },
+  const file = toWplaceFile({
+    dataUrl: 'data:image/png;base64,x',
+    globalX: 1_078_206,
+    globalY: 704_428,
     width: 92,
     height: 125,
     opacity: 50,
     name: 'template',
     lock: false,
-    disabled: false,
-  } as unknown as BotImage
-  const file = toWplaceFile(image)
+    visible: true,
+  })
   const data = fromWplaceFile(file)
   expect(data.position).toEqual([1_078_206, 704_428])
   expect(data.width).toBe(92)

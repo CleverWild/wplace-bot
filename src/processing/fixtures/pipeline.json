@@ -1,0 +1,1662 @@
+[
+  {
+    "name": "tile-boundaries",
+    "input": {
+      "id": 1,
+      "nativeWidth": 3,
+      "nativeHeight": 3,
+      "width": 3,
+      "height": 3,
+      "unavailableColors": [
+        34
+      ],
+      "brightness": 0,
+      "colorMetric": "lab",
+      "drawColorsInOrder": false,
+      "colors": [
+        1,
+        5,
+        8,
+        15,
+        12,
+        20,
+        34,
+        3
+      ],
+      "disabledColors": [],
+      "unownedColorStrategy": "SKIP",
+      "strategy": "DOWN",
+      "regionOrder": "OFF",
+      "fillDirection": "SEED_OUT",
+      "outlineFirst": false,
+      "globalX": 999,
+      "globalY": 999,
+      "drawTransparentPixels": false,
+      "data": [
+        0,
+        0,
+        0,
+        255,
+        255,
+        255,
+        255,
+        255,
+        255,
+        127,
+        39,
+        255,
+        12,
+        129,
+        110,
+        255,
+        0,
+        0,
+        0,
+        0,
+        14,
+        185,
+        104,
+        255,
+        96,
+        247,
+        242,
+        255,
+        250,
+        128,
+        114,
+        255,
+        120,
+        120,
+        120,
+        255
+      ]
+    },
+    "mapPixels": [
+      [
+        999,
+        999,
+        1
+      ],
+      [
+        1000,
+        999,
+        8
+      ],
+      [
+        1000,
+        1000,
+        5
+      ],
+      [
+        1001,
+        1001,
+        3
+      ]
+    ],
+    "expected": {
+      "taskPositions": [
+        1000,
+        999,
+        1001,
+        999,
+        999,
+        1000,
+        1001,
+        1000,
+        999,
+        1001
+      ],
+      "pixels": [
+        1,
+        5,
+        8,
+        15,
+        0,
+        12,
+        20,
+        34,
+        3
+      ],
+      "colorStat": [
+        [
+          1,
+          {
+            "color": 1,
+            "amount": 1,
+            "left": 0,
+            "realColor": 1
+          }
+        ],
+        [
+          5,
+          {
+            "color": 5,
+            "amount": 1,
+            "left": 1,
+            "realColor": 5
+          }
+        ],
+        [
+          8,
+          {
+            "color": 8,
+            "amount": 1,
+            "left": 1,
+            "realColor": 8
+          }
+        ],
+        [
+          15,
+          {
+            "color": 15,
+            "amount": 1,
+            "left": 1,
+            "realColor": 15
+          }
+        ],
+        [
+          0,
+          {
+            "color": 0,
+            "amount": 1,
+            "left": 1,
+            "realColor": 0
+          }
+        ],
+        [
+          12,
+          {
+            "color": 12,
+            "amount": 1,
+            "left": 1,
+            "realColor": 12
+          }
+        ],
+        [
+          20,
+          {
+            "color": 20,
+            "amount": 1,
+            "left": 1,
+            "realColor": 20
+          }
+        ],
+        [
+          34,
+          {
+            "color": 54,
+            "amount": 1,
+            "left": 1,
+            "realColor": 34
+          }
+        ],
+        [
+          3,
+          {
+            "color": 3,
+            "amount": 1,
+            "left": 0,
+            "realColor": 3
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "name": "scale-and-brightness",
+    "input": {
+      "id": 1,
+      "nativeWidth": 3,
+      "nativeHeight": 3,
+      "width": 5,
+      "height": 4,
+      "unavailableColors": [
+        34
+      ],
+      "brightness": 12,
+      "colorMetric": "lab",
+      "drawColorsInOrder": false,
+      "colors": [
+        1,
+        5,
+        8,
+        15,
+        12,
+        20,
+        34,
+        3
+      ],
+      "disabledColors": [],
+      "unownedColorStrategy": "SKIP",
+      "strategy": "DOWN",
+      "regionOrder": "OFF",
+      "fillDirection": "SEED_OUT",
+      "outlineFirst": false,
+      "globalX": 999,
+      "globalY": 999,
+      "drawTransparentPixels": false,
+      "data": [
+        0,
+        0,
+        0,
+        255,
+        255,
+        255,
+        255,
+        255,
+        255,
+        127,
+        39,
+        255,
+        12,
+        129,
+        110,
+        255,
+        0,
+        0,
+        0,
+        0,
+        14,
+        185,
+        104,
+        255,
+        96,
+        247,
+        242,
+        255,
+        250,
+        128,
+        114,
+        255,
+        120,
+        120,
+        120,
+        255
+      ]
+    },
+    "mapPixels": [
+      [
+        999,
+        999,
+        1
+      ],
+      [
+        1000,
+        999,
+        8
+      ],
+      [
+        1000,
+        1000,
+        5
+      ],
+      [
+        1001,
+        1001,
+        3
+      ]
+    ],
+    "expected": {
+      "taskPositions": [
+        1000,
+        999,
+        1001,
+        999,
+        1002,
+        999,
+        1003,
+        999,
+        999,
+        1000,
+        1000,
+        1000,
+        1001,
+        1000,
+        1002,
+        1000,
+        1003,
+        1000,
+        999,
+        1001,
+        1000,
+        1001,
+        1003,
+        1001,
+        999,
+        1002,
+        1000,
+        1002,
+        1003,
+        1002
+      ],
+      "pixels": [
+        1,
+        1,
+        5,
+        5,
+        8,
+        1,
+        1,
+        5,
+        5,
+        8,
+        15,
+        15,
+        0,
+        0,
+        12,
+        20,
+        20,
+        34,
+        34,
+        3
+      ],
+      "colorStat": [
+        [
+          1,
+          {
+            "color": 1,
+            "amount": 4,
+            "left": 3,
+            "realColor": 1
+          }
+        ],
+        [
+          5,
+          {
+            "color": 5,
+            "amount": 4,
+            "left": 4,
+            "realColor": 5
+          }
+        ],
+        [
+          8,
+          {
+            "color": 8,
+            "amount": 2,
+            "left": 2,
+            "realColor": 8
+          }
+        ],
+        [
+          15,
+          {
+            "color": 15,
+            "amount": 2,
+            "left": 2,
+            "realColor": 15
+          }
+        ],
+        [
+          0,
+          {
+            "color": 0,
+            "amount": 2,
+            "left": 1,
+            "realColor": 0
+          }
+        ],
+        [
+          12,
+          {
+            "color": 12,
+            "amount": 1,
+            "left": 1,
+            "realColor": 12
+          }
+        ],
+        [
+          20,
+          {
+            "color": 20,
+            "amount": 2,
+            "left": 2,
+            "realColor": 20
+          }
+        ],
+        [
+          34,
+          {
+            "color": 54,
+            "amount": 2,
+            "left": 2,
+            "realColor": 34
+          }
+        ],
+        [
+          3,
+          {
+            "color": 3,
+            "amount": 1,
+            "left": 1,
+            "realColor": 3
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "name": "unavailable-substitution",
+    "input": {
+      "id": 1,
+      "nativeWidth": 3,
+      "nativeHeight": 3,
+      "width": 3,
+      "height": 3,
+      "unavailableColors": [
+        34
+      ],
+      "brightness": 0,
+      "colorMetric": "lab",
+      "drawColorsInOrder": false,
+      "colors": [
+        1,
+        5,
+        8,
+        15,
+        12,
+        20,
+        34,
+        3
+      ],
+      "disabledColors": [],
+      "unownedColorStrategy": "SUBSTITUTE",
+      "strategy": "DOWN",
+      "regionOrder": "OFF",
+      "fillDirection": "SEED_OUT",
+      "outlineFirst": false,
+      "globalX": 999,
+      "globalY": 999,
+      "drawTransparentPixels": false,
+      "data": [
+        0,
+        0,
+        0,
+        255,
+        255,
+        255,
+        255,
+        255,
+        255,
+        127,
+        39,
+        255,
+        12,
+        129,
+        110,
+        255,
+        0,
+        0,
+        0,
+        0,
+        14,
+        185,
+        104,
+        255,
+        96,
+        247,
+        242,
+        255,
+        250,
+        128,
+        114,
+        255,
+        120,
+        120,
+        120,
+        255
+      ]
+    },
+    "mapPixels": [
+      [
+        999,
+        999,
+        1
+      ],
+      [
+        1000,
+        999,
+        8
+      ],
+      [
+        1000,
+        1000,
+        5
+      ],
+      [
+        1001,
+        1001,
+        3
+      ]
+    ],
+    "expected": {
+      "taskPositions": [
+        1000,
+        999,
+        1001,
+        999,
+        999,
+        1000,
+        1001,
+        1000,
+        999,
+        1001,
+        1000,
+        1001
+      ],
+      "pixels": [
+        1,
+        5,
+        8,
+        15,
+        0,
+        12,
+        20,
+        54,
+        3
+      ],
+      "colorStat": [
+        [
+          1,
+          {
+            "color": 1,
+            "amount": 1,
+            "left": 0,
+            "realColor": 1
+          }
+        ],
+        [
+          5,
+          {
+            "color": 5,
+            "amount": 1,
+            "left": 1,
+            "realColor": 5
+          }
+        ],
+        [
+          8,
+          {
+            "color": 8,
+            "amount": 1,
+            "left": 1,
+            "realColor": 8
+          }
+        ],
+        [
+          15,
+          {
+            "color": 15,
+            "amount": 1,
+            "left": 1,
+            "realColor": 15
+          }
+        ],
+        [
+          0,
+          {
+            "color": 0,
+            "amount": 1,
+            "left": 1,
+            "realColor": 0
+          }
+        ],
+        [
+          12,
+          {
+            "color": 12,
+            "amount": 1,
+            "left": 1,
+            "realColor": 12
+          }
+        ],
+        [
+          20,
+          {
+            "color": 20,
+            "amount": 1,
+            "left": 1,
+            "realColor": 20
+          }
+        ],
+        [
+          34,
+          {
+            "color": 54,
+            "amount": 1,
+            "left": 1,
+            "realColor": 34
+          }
+        ],
+        [
+          3,
+          {
+            "color": 3,
+            "amount": 1,
+            "left": 0,
+            "realColor": 3
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "name": "skip-and-transparency",
+    "input": {
+      "id": 1,
+      "nativeWidth": 3,
+      "nativeHeight": 3,
+      "width": 3,
+      "height": 3,
+      "unavailableColors": [
+        34
+      ],
+      "brightness": 0,
+      "colorMetric": "lab",
+      "drawColorsInOrder": false,
+      "colors": [
+        1,
+        5,
+        8,
+        15,
+        12,
+        20,
+        34,
+        3
+      ],
+      "disabledColors": [
+        3,
+        5
+      ],
+      "unownedColorStrategy": "SKIP",
+      "strategy": "DOWN",
+      "regionOrder": "OFF",
+      "fillDirection": "SEED_OUT",
+      "outlineFirst": false,
+      "globalX": 999,
+      "globalY": 999,
+      "drawTransparentPixels": true,
+      "data": [
+        0,
+        0,
+        0,
+        255,
+        255,
+        255,
+        255,
+        255,
+        255,
+        127,
+        39,
+        255,
+        12,
+        129,
+        110,
+        255,
+        0,
+        0,
+        0,
+        0,
+        14,
+        185,
+        104,
+        255,
+        96,
+        247,
+        242,
+        255,
+        250,
+        128,
+        114,
+        255,
+        120,
+        120,
+        120,
+        255
+      ]
+    },
+    "mapPixels": [
+      [
+        999,
+        999,
+        1
+      ],
+      [
+        1000,
+        999,
+        8
+      ],
+      [
+        1000,
+        1000,
+        5
+      ],
+      [
+        1001,
+        1001,
+        3
+      ]
+    ],
+    "expected": {
+      "taskPositions": [
+        1001,
+        999,
+        999,
+        1000,
+        1000,
+        1000,
+        1001,
+        1000,
+        999,
+        1001
+      ],
+      "pixels": [
+        1,
+        5,
+        8,
+        15,
+        0,
+        12,
+        20,
+        34,
+        3
+      ],
+      "colorStat": [
+        [
+          1,
+          {
+            "color": 1,
+            "amount": 1,
+            "left": 0,
+            "realColor": 1
+          }
+        ],
+        [
+          5,
+          {
+            "color": 5,
+            "amount": 1,
+            "left": 1,
+            "realColor": 5
+          }
+        ],
+        [
+          8,
+          {
+            "color": 8,
+            "amount": 1,
+            "left": 1,
+            "realColor": 8
+          }
+        ],
+        [
+          15,
+          {
+            "color": 15,
+            "amount": 1,
+            "left": 1,
+            "realColor": 15
+          }
+        ],
+        [
+          0,
+          {
+            "color": 0,
+            "amount": 1,
+            "left": 1,
+            "realColor": 0
+          }
+        ],
+        [
+          12,
+          {
+            "color": 12,
+            "amount": 1,
+            "left": 1,
+            "realColor": 12
+          }
+        ],
+        [
+          20,
+          {
+            "color": 20,
+            "amount": 1,
+            "left": 1,
+            "realColor": 20
+          }
+        ],
+        [
+          34,
+          {
+            "color": 54,
+            "amount": 1,
+            "left": 1,
+            "realColor": 34
+          }
+        ],
+        [
+          3,
+          {
+            "color": 3,
+            "amount": 1,
+            "left": 0,
+            "realColor": 3
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "name": "contrast-regions-color-outline",
+    "input": {
+      "id": 1,
+      "nativeWidth": 3,
+      "nativeHeight": 3,
+      "width": 3,
+      "height": 3,
+      "unavailableColors": [
+        34
+      ],
+      "brightness": 0,
+      "colorMetric": "lab",
+      "drawColorsInOrder": true,
+      "colors": [
+        1,
+        5,
+        8,
+        15,
+        12,
+        20,
+        34,
+        3
+      ],
+      "disabledColors": [],
+      "unownedColorStrategy": "SKIP",
+      "strategy": "CONTRAST",
+      "regionOrder": "LARGEST",
+      "fillDirection": "EDGE_IN",
+      "outlineFirst": true,
+      "globalX": 999,
+      "globalY": 999,
+      "drawTransparentPixels": false,
+      "data": [
+        0,
+        0,
+        0,
+        255,
+        255,
+        255,
+        255,
+        255,
+        255,
+        127,
+        39,
+        255,
+        12,
+        129,
+        110,
+        255,
+        0,
+        0,
+        0,
+        0,
+        14,
+        185,
+        104,
+        255,
+        96,
+        247,
+        242,
+        255,
+        250,
+        128,
+        114,
+        255,
+        120,
+        120,
+        120,
+        255
+      ]
+    },
+    "mapPixels": [
+      [
+        999,
+        999,
+        1
+      ],
+      [
+        1000,
+        999,
+        8
+      ],
+      [
+        1000,
+        1000,
+        5
+      ],
+      [
+        1001,
+        1001,
+        3
+      ]
+    ],
+    "expected": {
+      "taskPositions": [
+        1000,
+        999,
+        1001,
+        999,
+        999,
+        1000,
+        1001,
+        1000,
+        999,
+        1001
+      ],
+      "pixels": [
+        1,
+        5,
+        8,
+        15,
+        0,
+        12,
+        20,
+        34,
+        3
+      ],
+      "colorStat": [
+        [
+          1,
+          {
+            "color": 1,
+            "amount": 1,
+            "left": 0,
+            "realColor": 1
+          }
+        ],
+        [
+          5,
+          {
+            "color": 5,
+            "amount": 1,
+            "left": 1,
+            "realColor": 5
+          }
+        ],
+        [
+          8,
+          {
+            "color": 8,
+            "amount": 1,
+            "left": 1,
+            "realColor": 8
+          }
+        ],
+        [
+          15,
+          {
+            "color": 15,
+            "amount": 1,
+            "left": 1,
+            "realColor": 15
+          }
+        ],
+        [
+          0,
+          {
+            "color": 0,
+            "amount": 1,
+            "left": 1,
+            "realColor": 0
+          }
+        ],
+        [
+          12,
+          {
+            "color": 12,
+            "amount": 1,
+            "left": 1,
+            "realColor": 12
+          }
+        ],
+        [
+          20,
+          {
+            "color": 20,
+            "amount": 1,
+            "left": 1,
+            "realColor": 20
+          }
+        ],
+        [
+          34,
+          {
+            "color": 54,
+            "amount": 1,
+            "left": 1,
+            "realColor": 34
+          }
+        ],
+        [
+          3,
+          {
+            "color": 3,
+            "amount": 1,
+            "left": 0,
+            "realColor": 3
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "name": "spiral-regions",
+    "input": {
+      "id": 1,
+      "nativeWidth": 3,
+      "nativeHeight": 3,
+      "width": 3,
+      "height": 3,
+      "unavailableColors": [
+        34
+      ],
+      "brightness": 0,
+      "colorMetric": "lab",
+      "drawColorsInOrder": false,
+      "colors": [
+        1,
+        5,
+        8,
+        15,
+        12,
+        20,
+        34,
+        3
+      ],
+      "disabledColors": [],
+      "unownedColorStrategy": "SKIP",
+      "strategy": "SPIRAL_TO_CENTER",
+      "regionOrder": "IN_ORDER",
+      "fillDirection": "SEED_OUT",
+      "outlineFirst": false,
+      "globalX": 999,
+      "globalY": 999,
+      "drawTransparentPixels": false,
+      "data": [
+        0,
+        0,
+        0,
+        255,
+        255,
+        255,
+        255,
+        255,
+        255,
+        127,
+        39,
+        255,
+        12,
+        129,
+        110,
+        255,
+        0,
+        0,
+        0,
+        0,
+        14,
+        185,
+        104,
+        255,
+        96,
+        247,
+        242,
+        255,
+        250,
+        128,
+        114,
+        255,
+        120,
+        120,
+        120,
+        255
+      ]
+    },
+    "mapPixels": [
+      [
+        999,
+        999,
+        1
+      ],
+      [
+        1000,
+        999,
+        8
+      ],
+      [
+        1000,
+        1000,
+        5
+      ],
+      [
+        1001,
+        1001,
+        3
+      ]
+    ],
+    "expected": {
+      "taskPositions": [
+        1000,
+        999,
+        1001,
+        999,
+        1001,
+        1000,
+        999,
+        1001,
+        999,
+        1000
+      ],
+      "pixels": [
+        1,
+        5,
+        8,
+        15,
+        0,
+        12,
+        20,
+        34,
+        3
+      ],
+      "colorStat": [
+        [
+          1,
+          {
+            "color": 1,
+            "amount": 1,
+            "left": 0,
+            "realColor": 1
+          }
+        ],
+        [
+          5,
+          {
+            "color": 5,
+            "amount": 1,
+            "left": 1,
+            "realColor": 5
+          }
+        ],
+        [
+          8,
+          {
+            "color": 8,
+            "amount": 1,
+            "left": 1,
+            "realColor": 8
+          }
+        ],
+        [
+          15,
+          {
+            "color": 15,
+            "amount": 1,
+            "left": 1,
+            "realColor": 15
+          }
+        ],
+        [
+          0,
+          {
+            "color": 0,
+            "amount": 1,
+            "left": 1,
+            "realColor": 0
+          }
+        ],
+        [
+          12,
+          {
+            "color": 12,
+            "amount": 1,
+            "left": 1,
+            "realColor": 12
+          }
+        ],
+        [
+          20,
+          {
+            "color": 20,
+            "amount": 1,
+            "left": 1,
+            "realColor": 20
+          }
+        ],
+        [
+          34,
+          {
+            "color": 54,
+            "amount": 1,
+            "left": 1,
+            "realColor": 34
+          }
+        ],
+        [
+          3,
+          {
+            "color": 3,
+            "amount": 1,
+            "left": 0,
+            "realColor": 3
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "name": "rgb-metric",
+    "input": {
+      "id": 1,
+      "nativeWidth": 3,
+      "nativeHeight": 3,
+      "width": 3,
+      "height": 3,
+      "unavailableColors": [
+        34
+      ],
+      "brightness": 8,
+      "colorMetric": "compuphase",
+      "drawColorsInOrder": false,
+      "colors": [
+        1,
+        5,
+        8,
+        15,
+        12,
+        20,
+        34,
+        3
+      ],
+      "disabledColors": [],
+      "unownedColorStrategy": "SKIP",
+      "strategy": "DOWN",
+      "regionOrder": "OFF",
+      "fillDirection": "SEED_OUT",
+      "outlineFirst": false,
+      "globalX": 999,
+      "globalY": 999,
+      "drawTransparentPixels": false,
+      "data": [
+        0,
+        0,
+        0,
+        255,
+        255,
+        255,
+        255,
+        255,
+        255,
+        127,
+        39,
+        255,
+        12,
+        129,
+        110,
+        255,
+        0,
+        0,
+        0,
+        0,
+        14,
+        185,
+        104,
+        255,
+        96,
+        247,
+        242,
+        255,
+        250,
+        128,
+        114,
+        255,
+        120,
+        120,
+        120,
+        255
+      ]
+    },
+    "mapPixels": [
+      [
+        999,
+        999,
+        1
+      ],
+      [
+        1000,
+        999,
+        8
+      ],
+      [
+        1000,
+        1000,
+        5
+      ],
+      [
+        1001,
+        1001,
+        3
+      ]
+    ],
+    "expected": {
+      "taskPositions": [
+        1000,
+        999,
+        1001,
+        999,
+        999,
+        1000,
+        1001,
+        1000,
+        999,
+        1001
+      ],
+      "pixels": [
+        1,
+        5,
+        8,
+        15,
+        0,
+        12,
+        20,
+        34,
+        3
+      ],
+      "colorStat": [
+        [
+          1,
+          {
+            "color": 1,
+            "amount": 1,
+            "left": 0,
+            "realColor": 1
+          }
+        ],
+        [
+          5,
+          {
+            "color": 5,
+            "amount": 1,
+            "left": 1,
+            "realColor": 5
+          }
+        ],
+        [
+          8,
+          {
+            "color": 8,
+            "amount": 1,
+            "left": 1,
+            "realColor": 8
+          }
+        ],
+        [
+          15,
+          {
+            "color": 15,
+            "amount": 1,
+            "left": 1,
+            "realColor": 15
+          }
+        ],
+        [
+          0,
+          {
+            "color": 0,
+            "amount": 1,
+            "left": 1,
+            "realColor": 0
+          }
+        ],
+        [
+          12,
+          {
+            "color": 12,
+            "amount": 1,
+            "left": 1,
+            "realColor": 12
+          }
+        ],
+        [
+          20,
+          {
+            "color": 20,
+            "amount": 1,
+            "left": 1,
+            "realColor": 20
+          }
+        ],
+        [
+          34,
+          {
+            "color": 54,
+            "amount": 1,
+            "left": 1,
+            "realColor": 34
+          }
+        ],
+        [
+          3,
+          {
+            "color": 3,
+            "amount": 1,
+            "left": 0,
+            "realColor": 3
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "name": "ciede2000",
+    "input": {
+      "id": 1,
+      "nativeWidth": 3,
+      "nativeHeight": 3,
+      "width": 3,
+      "height": 3,
+      "unavailableColors": [
+        34
+      ],
+      "brightness": -5,
+      "colorMetric": "ciede2000",
+      "drawColorsInOrder": false,
+      "colors": [
+        1,
+        5,
+        8,
+        15,
+        12,
+        20,
+        34,
+        3
+      ],
+      "disabledColors": [],
+      "unownedColorStrategy": "SKIP",
+      "strategy": "DOWN",
+      "regionOrder": "OFF",
+      "fillDirection": "SEED_OUT",
+      "outlineFirst": false,
+      "globalX": 999,
+      "globalY": 999,
+      "drawTransparentPixels": false,
+      "data": [
+        0,
+        0,
+        0,
+        255,
+        255,
+        255,
+        255,
+        255,
+        255,
+        127,
+        39,
+        255,
+        12,
+        129,
+        110,
+        255,
+        0,
+        0,
+        0,
+        0,
+        14,
+        185,
+        104,
+        255,
+        96,
+        247,
+        242,
+        255,
+        250,
+        128,
+        114,
+        255,
+        120,
+        120,
+        120,
+        255
+      ]
+    },
+    "mapPixels": [
+      [
+        999,
+        999,
+        1
+      ],
+      [
+        1000,
+        999,
+        8
+      ],
+      [
+        1000,
+        1000,
+        5
+      ],
+      [
+        1001,
+        1001,
+        3
+      ]
+    ],
+    "expected": {
+      "taskPositions": [
+        1000,
+        999,
+        1001,
+        999,
+        999,
+        1000,
+        1001,
+        1000,
+        999,
+        1001
+      ],
+      "pixels": [
+        1,
+        5,
+        8,
+        15,
+        0,
+        12,
+        20,
+        34,
+        3
+      ],
+      "colorStat": [
+        [
+          1,
+          {
+            "color": 1,
+            "amount": 1,
+            "left": 0,
+            "realColor": 1
+          }
+        ],
+        [
+          5,
+          {
+            "color": 5,
+            "amount": 1,
+            "left": 1,
+            "realColor": 5
+          }
+        ],
+        [
+          8,
+          {
+            "color": 8,
+            "amount": 1,
+            "left": 1,
+            "realColor": 8
+          }
+        ],
+        [
+          15,
+          {
+            "color": 15,
+            "amount": 1,
+            "left": 1,
+            "realColor": 15
+          }
+        ],
+        [
+          0,
+          {
+            "color": 0,
+            "amount": 1,
+            "left": 1,
+            "realColor": 0
+          }
+        ],
+        [
+          12,
+          {
+            "color": 12,
+            "amount": 1,
+            "left": 1,
+            "realColor": 12
+          }
+        ],
+        [
+          20,
+          {
+            "color": 20,
+            "amount": 1,
+            "left": 1,
+            "realColor": 20
+          }
+        ],
+        [
+          34,
+          {
+            "color": 54,
+            "amount": 1,
+            "left": 1,
+            "realColor": 34
+          }
+        ],
+        [
+          3,
+          {
+            "color": 3,
+            "amount": 1,
+            "left": 0,
+            "realColor": 3
+          }
+        ]
+      ]
+    }
+  }
+]
