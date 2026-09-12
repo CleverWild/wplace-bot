@@ -6,9 +6,12 @@
   "sideEffects": false,
   "scripts": {
     "build": "bun src/build.ts",
+    "build:check": "bun src/build.ts --check",
+    "check": "stylelint \"src/**/*.{css,scss,sass}\" && eslint \"src/**/*{.js,.ts}\" && tsc --noEmit --composite false --incremental false && bun test",
     "copy": "bun run build && wl-copy < dist.user.js",
-    "test": "bun test",
-    "lint": "stylelint \"src/**/*.{css,scss,sass}\" --fix && eslint \"src/**/*{.js,.ts}\" --fix && tsc"
+    "fix": "bun run lint",
+    "lint": "stylelint \"src/**/*.{css,scss,sass}\" --fix && eslint \"src/**/*{.js,.ts}\" --fix && tsc",
+    "test": "bun test"
   },
   "devDependencies": {
     "@softsky/configs": "^1.5.2",
