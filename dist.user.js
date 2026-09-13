@@ -232,8 +232,7 @@ function colorToCSS(colorId) {
 var RANK = {
   none: 0,
   render: 1,
-  colors: 2,
-  recompute: 3
+  recompute: 2
 };
 var SETTING_EFFECTS = {
   width: "recompute",
@@ -249,7 +248,7 @@ var SETTING_EFFECTS = {
   lock: "render",
   disabled: "recompute",
   name: "render",
-  unownedColorStrategy: "colors",
+  unownedColorStrategy: "recompute",
   wplaceId: "render",
   siteDisabled: "recompute",
   regionOrder: "recompute",
@@ -293,7 +292,7 @@ class ImageController {
     if (effect === "recompute")
       await this.recompute();
     else
-      this.host.render(effect);
+      this.host.render();
     if (save)
       await this.host.save();
     return effect;
@@ -301,7 +300,7 @@ class ImageController {
   preview(changes) {
     if (this.assign(changes).length === 0)
       return Promise.resolve();
-    this.host.render("render");
+    this.host.render();
     return this.host.save();
   }
   recompute(progress) {
@@ -2082,10 +2081,8 @@ class BotImage extends Base2 {
       apply: (calculation, progress) => {
         this.applyCalculation(calculation, progress);
       },
-      render: (effect) => {
+      render: () => {
         this.updateUI();
-        if (effect === "colors")
-          this.updateColors();
       },
       save: () => save(this.bot)
     });
@@ -2485,6 +2482,7 @@ class BotImage extends Base2 {
       let dragging = false;
       const startDrag = (startEvent) => {
         addClass($button, "dragging");
+        dragging = false;
         let newIndex = index;
         const mouseMoveHandler = (event) => {
           newIndex = Math.min(this.colors.length - 1, Math.max(0, Math.round(index + (event.clientY - startEvent.clientY) / LINE_HEIGHT)));
@@ -2507,7 +2505,6 @@ class BotImage extends Base2 {
         document.addEventListener("mouseup", () => {
           removeClass($button, "dragging");
           document.removeEventListener("mousemove", mouseMoveHandler);
-          $button.removeEventListener("mousedown", startDrag);
           if (newIndex === index)
             return;
           const colors = [...this.colors];

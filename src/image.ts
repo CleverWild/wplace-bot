@@ -282,9 +282,8 @@ export class BotImage extends Base {
         apply: (calculation, progress) => {
           this.applyCalculation(calculation, progress)
         },
-        render: (effect) => {
+        render: () => {
           this.updateUI()
-          if (effect === 'colors') this.updateColors()
         },
         save: () => save(this.bot),
       },
@@ -770,6 +769,8 @@ export class BotImage extends Base {
       // Dragging. Both document listeners live only for one gesture
       const startDrag = (startEvent: MouseEvent) => {
         addClass($button, 'dragging')
+        // A gesture that ends where it started is a click, not a leftover drag
+        dragging = false
         let newIndex = index
         const mouseMoveHandler = (event: MouseEvent) => {
           newIndex = Math.min(
@@ -799,7 +800,6 @@ export class BotImage extends Base {
           () => {
             removeClass($button, 'dragging')
             document.removeEventListener('mousemove', mouseMoveHandler)
-            $button.removeEventListener('mousedown', startDrag)
             if (newIndex === index) return
             const colors = [...this.colors]
             colors.splice(newIndex, 0, ...colors.splice(index, 1))

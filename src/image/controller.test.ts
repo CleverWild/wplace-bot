@@ -30,7 +30,7 @@ function setup() {
           })
         }),
       apply: (width) => applied.push(width),
-      render: (effect) => rendered.push(effect),
+      render: () => rendered.push('render'),
       save: () => {
         saves++
         return Promise.resolve()
@@ -50,7 +50,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 test('opacity, lock and name only render', () => {
   expect(effectOf(['opacity', 'lock', 'name'])).toBe('render')
-  expect(effectOf(['unownedColorStrategy', 'opacity'])).toBe('colors')
+  expect(effectOf(['unownedColorStrategy', 'opacity'])).toBe('recompute')
   expect(effectOf(['opacity', 'globalX'])).toBe('recompute')
   expect(effectOf([])).toBe('none')
 })

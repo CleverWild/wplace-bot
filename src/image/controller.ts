@@ -1,7 +1,7 @@
 import { type ImageSettings } from './model'
 
 /** Cheapest first: each effect includes what the ones before it do */
-export type ImageEffect = 'none' | 'render' | 'colors' | 'recompute'
+export type ImageEffect = 'none' | 'render' | 'recompute'
 
 export type ImagePlacement = { globalX: number; globalY: number }
 
@@ -10,8 +10,7 @@ export type ImageChanges = Partial<ImageSettings & ImagePlacement>
 const RANK: Record<ImageEffect, number> = {
   none: 0,
   render: 1,
-  colors: 2,
-  recompute: 3,
+  recompute: 2,
 }
 
 /**
@@ -37,8 +36,8 @@ export const SETTING_EFFECTS: Record<
   // Tasks of a hidden image are dropped, and showing it needs fresh ones
   disabled: 'recompute',
   name: 'render',
-  // Only the color bar reacts until the next calculation, as it always did
-  unownedColorStrategy: 'colors',
+  // Substitution changes which colors the pixels get
+  unownedColorStrategy: 'recompute',
   wplaceId: 'render',
   siteDisabled: 'recompute',
   regionOrder: 'recompute',
@@ -69,7 +68,7 @@ export type ImageControllerHost<Result> = {
   /** Starts a calculation from the settings as they are at call time */
   calculate(progress?: (p: number) => void): Promise<Result>
   apply(result: Result, progress?: (p: number) => void): void
-  render(effect: 'render' | 'colors'): void
+  render(): void
   save(): Promise<void>
 }
 
@@ -93,7 +92,7 @@ export class ImageController<Result> {
     const effect = effectOf(this.assign(changes))
     if (effect === 'none') return effect
     if (effect === 'recompute') await this.recompute()
-    else this.host.render(effect)
+    else this.host.render()
     if (save) await this.host.save()
     return effect
   }
@@ -104,7 +103,7 @@ export class ImageController<Result> {
    */
   public preview(changes: ImageChanges): Promise<void> {
     if (this.assign(changes).length === 0) return Promise.resolve()
-    this.host.render('render')
+    this.host.render()
     return this.host.save()
   }
 
