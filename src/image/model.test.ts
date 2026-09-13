@@ -23,6 +23,15 @@ test('overrides are copied, not shared', () => {
   expect([...settings.disabledColors]).toEqual([2])
 })
 
+test('keys that are not settings are dropped', () => {
+  const settings = createImageSettings({
+    url: 'data:x',
+    version: 8,
+  } as Parameters<typeof createImageSettings>[0])
+  expect(settings).not.toHaveProperty('url')
+  expect(settings).not.toHaveProperty('version')
+})
+
 test('undefined overrides keep the default', () => {
   const settings = createImageSettings({
     opacity: undefined,

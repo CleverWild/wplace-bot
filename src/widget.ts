@@ -195,19 +195,14 @@ export class Widget extends Base {
       const $name = querySelector<HTMLInputElement>($image, '.name')!
       $name.value = image.name
       $name.addEventListener('change', () => {
-        image.name = $name.value
-        image.updateUI()
-        this.update()
-        void save(this.bot)
+        void image.update({ name: $name.value })
       })
       const $enabled = querySelector<HTMLInputElement>($image, '.enabled')!
       // The name belongs to the site for imported templates, but the switch
       // is ours: the site's own visibility is tracked separately
       if (image.wplaceId) $name.readOnly = true
-      $enabled.addEventListener('change', async () => {
-        image.disabled = !$enabled.checked
-        await image.updatePixels()
-        await save(this.bot)
+      $enabled.addEventListener('change', () => {
+        void image.update({ disabled: !$enabled.checked })
       })
       // Close on input to not consume space
       this.bot.fixSpaceInInput($name)

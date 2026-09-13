@@ -59,13 +59,16 @@ export type ImageSettings = {
 
 /**
  * Undefined overrides keep the default, as the positional constructor
- * parameters did: old saves carry explicit undefined fields.
+ * parameters did: old saves carry explicit undefined fields. Keys that are not
+ * settings are dropped, so saved extras like `url` do not ride along.
  */
 export function createImageSettings(
   overrides: Partial<ImageSettings> = {},
 ): ImageSettings {
   const settings: ImageSettings = {
     width: 1,
+    height: undefined,
+    wplaceId: undefined,
     brightness: 0,
     colorMetric: 'lab',
     strategy: ImageStrategy.SPIRAL_TO_CENTER,
@@ -86,7 +89,8 @@ export function createImageSettings(
   for (const [key, value] of Object.entries(
     overrides as Record<string, unknown>,
   ))
-    if (value !== undefined) Object.assign(settings, { [key]: value })
+    if (value !== undefined && key in settings)
+      Object.assign(settings, { [key]: value })
   settings.colors = [...settings.colors]
   settings.disabledColors = new Set(settings.disabledColors)
   return settings
