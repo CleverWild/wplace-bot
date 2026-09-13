@@ -1,5 +1,7 @@
 # Wplace-bot
 
+A fork of [SoundOfTheSky/wplace-bot](https://github.com/SoundOfTheSky/wplace-bot). Installing it over the original replaces it in Tampermonkey and keeps your saved images. Report problems in [this fork's issues](https://github.com/CleverWild/wplace-bot/issues).
+
 ## Features
 
 1. Auto draw
@@ -12,7 +14,7 @@
 ## Installation
 
 1. Install TamperMonkey browser extension: [Chrome](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo?hl=en) | [Firefox](https://addons.mozilla.org/en-US/firefox/addon/tampermonkey/)
-2. [Open this link](https://github.com/SoundOfTheSky/wplace-bot/raw/refs/heads/main/dist.user.js)
+2. [Open this link](https://github.com/CleverWild/wplace-bot/raw/refs/heads/main/dist.user.js)
 3. Press install.
 4. Allow user scripts.
 
@@ -30,7 +32,7 @@
 
 See the [dated map-positioning research](docs/map-positioning-research.md) and the [manual smoke checklist](docs/manual-smoke-check.md) for maintainer details.
 
-![Instruction1](https://github.com/SoundOfTheSky/wplace-bot/raw/refs/heads/main/Instruction.png)
+![Instruction1](https://github.com/CleverWild/wplace-bot/raw/refs/heads/main/Instruction.png)
 
 ## Contribution
 
