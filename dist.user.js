@@ -466,7 +466,7 @@ var image_default = `<div class="topbar">
 `;
 
 // src/persistence/schema.ts
-var SAVE_VERSION = 8;
+var SAVE_VERSION = 9;
 
 // src/persistence/migrations.ts
 function isFields(value) {
@@ -549,6 +549,8 @@ function migrate(old) {
       dropletStrategy: save.dropletStrategy === "CHARGES" ? "COLORS_FIRST" /* COLORS_FIRST */ : save.dropletStrategy,
       version: 8
     };
+  if (versionOf(save) < 9)
+    save = { ...save, widgetOpen: true, version: 9 };
   if (!Array.isArray(save.images))
     throw new Error("Save has no image list");
   return {
@@ -597,10 +599,16 @@ class SaveQueue {
     const waiters = this.waiters;
     this.snapshot = undefined;
     this.waiters = [];
+    let data;
+    try {
+      data = snapshot();
+    } catch (error) {
+      data = Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
     const job = this.tail.catch(() => {
       return;
     }).then(async () => {
-      await this.write(await snapshot());
+      await this.write(await data);
     });
     this.tail = job;
     job.then(() => {
@@ -3170,6 +3178,7 @@ class Widget extends Base2 {
       addClass(this.element, "open");
     else
       removeClass(this.element, "open");
+    this.bot.widgetOpen = value;
   }
   $settings;
   $status;
@@ -3207,7 +3216,12 @@ class Widget extends Base2 {
       $images: ".images",
       $autoDraw: ".auto-draw"
     });
-    this.$openButton.addEventListener("click", () => this.open = !this.open);
+    this.$openButton.addEventListener("click", () => {
+      const open = !this.open;
+      this.bot.widgetOpen = open;
+      save(this.bot, true);
+      this.open = open;
+    });
     this.$title.addEventListener("change", () => {
       this.bot.title = this.$title.value.trim();
       save(this.bot);
@@ -3228,7 +3242,7 @@ class Widget extends Base2 {
     setInterval(() => {
       this.updateProgress();
     }, 1000);
-    this.open = true;
+    this.open = this.bot.widgetOpen;
   }
   addImage() {
     this.setDisabled("add-image", true);
@@ -3382,7 +3396,8 @@ class WPlaceBot {
   images = [];
   autoDrawInterval;
   drawing = false;
-  widget = new Widget(this);
+  widgetOpen = true;
+  widget;
   markerPixelPositionResolvers = [];
   lastColor;
   paintResolver;
@@ -3391,9 +3406,11 @@ class WPlaceBot {
       this.strategy = save2.strategy;
       this.dropletStrategy = save2.dropletStrategy;
       this.title = save2.title;
+      this.widgetOpen = save2.widgetOpen;
     } else {
       this.title = "WPlace-bot";
     }
+    this.widget = new Widget(this);
     const known = new Set(save2?.images.map((image) => image.wplaceId));
     const newTemplates = readSiteTemplates().filter((template) => !known.has(template.id));
     this.registerFetchInterceptor();
@@ -3705,7 +3722,8 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       images: await Promise.all(this.images.map((x) => x.toJSON())),
       strategy: this.strategy,
       dropletStrategy: this.dropletStrategy,
-      title: this.title
+      title: this.title,
+      widgetOpen: this.widgetOpen
     };
   }
   async importSiteTemplates(templates) {

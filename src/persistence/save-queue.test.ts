@@ -12,6 +12,19 @@ test('writes a scheduled save without an explicit flush', async () => {
   expect(written).toEqual([4])
 })
 
+test('captures an immediate save before the caller continues', async () => {
+  const written: number[] = []
+  let value = 1
+  const queue = new SaveQueue<number>((saved) => {
+    written.push(saved)
+    return Promise.resolve()
+  })
+  const saved = queue.save(() => Promise.resolve(value), true)
+  value = 2
+  await saved
+  expect(written).toEqual([1])
+})
+
 test('flush reports an already running write failure', async () => {
   const queue = new SaveQueue<number>(() => Promise.reject(new Error('failed')))
   const saved = queue.save(() => Promise.resolve(1), true)

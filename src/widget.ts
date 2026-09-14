@@ -33,12 +33,13 @@ export class Widget extends Base {
     this.$status.innerHTML = value
   }
 
-  public get open() {
+  public get open(): boolean {
     return containsClass(this.element, 'open')
   }
-  public set open(value) {
+  public set open(value: boolean) {
     if (value) addClass(this.element, 'open')
     else removeClass(this.element, 'open')
+    this.bot.widgetOpen = value
   }
 
   protected readonly $settings!: HTMLDivElement
@@ -83,7 +84,12 @@ export class Widget extends Base {
     })
 
     // Button actions
-    this.$openButton.addEventListener('click', () => (this.open = !this.open))
+    this.$openButton.addEventListener('click', () => {
+      const open = !this.open
+      this.bot.widgetOpen = open
+      void save(this.bot, true)
+      this.open = open
+    })
     this.$title.addEventListener('change', () => {
       this.bot.title = this.$title.value.trim()
       void save(this.bot)
@@ -107,7 +113,7 @@ export class Widget extends Base {
     setInterval(() => {
       this.updateProgress()
     }, 1000)
-    this.open = true
+    this.open = this.bot.widgetOpen
   }
 
   /** Add image handler */

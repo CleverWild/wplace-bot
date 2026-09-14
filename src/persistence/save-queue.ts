@@ -37,10 +37,18 @@ export class SaveQueue<T> {
     this.snapshot = undefined
     this.waiters = []
     // Encoding may finish out of order; serialize it with the storage write.
+    let data: Promise<T>
+    try {
+      data = snapshot()
+    } catch (error) {
+      data = Promise.reject(
+        error instanceof Error ? error : new Error(String(error)),
+      )
+    }
     const job = this.tail
       .catch(() => undefined)
       .then(async () => {
-        await this.write(await snapshot())
+        await this.write(await data)
       })
     this.tail = job
     void job.then(

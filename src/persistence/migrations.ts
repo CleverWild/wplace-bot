@@ -23,6 +23,7 @@ type Fields = Record<string, unknown> & {
   images?: unknown
   strategy?: unknown
   dropletStrategy?: unknown
+  widgetOpen?: unknown
 }
 
 function isFields(value: unknown): value is Fields {
@@ -121,6 +122,7 @@ export function migrate(old: unknown): LoadedBot {
           : save.dropletStrategy,
       version: 8,
     }
+  if (versionOf(save) < 9) save = { ...save, widgetOpen: true, version: 9 }
   if (!Array.isArray(save.images)) throw new Error('Save has no image list')
   // Images carry their own version, so migrate them whatever the save says
   return {

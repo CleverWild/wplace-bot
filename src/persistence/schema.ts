@@ -1,7 +1,7 @@
 import { type BotStrategy, type DropletStrategy } from '../drawing/policy'
 import { type ImageSettings } from '../image/model'
 
-export const SAVE_VERSION = 8
+export const SAVE_VERSION = 9
 
 export type SavedImage = Omit<ImageSettings, 'disabledColors'> & {
   url: string
@@ -17,6 +17,7 @@ export type SavedBot = {
   strategy: BotStrategy
   dropletStrategy: DropletStrategy
   title: string
+  widgetOpen: boolean
 }
 
 /**

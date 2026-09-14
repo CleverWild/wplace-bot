@@ -43,6 +43,7 @@ test('a current save passes through unchanged', () => {
     strategy: BotStrategy.PERCENTAGE,
     dropletStrategy: DropletStrategy.COLORS_FIRST,
     title: 'mine',
+    widgetOpen: false,
   }
   expect(migrate(structuredClone(save))).toEqual(save)
 })
@@ -129,6 +130,7 @@ test('a save from before version 3 gets a title and colors-only droplets', () =>
     strategy: BotStrategy.ALL,
     dropletStrategy: DropletStrategy.COLORS,
     title: 'WPlace-bot',
+    widgetOpen: true,
   })
 })
 
@@ -141,6 +143,17 @@ test('version 7 charges-only droplets become colors first', () => {
     title: 't',
   })
   expect(save.dropletStrategy).toBe(DropletStrategy.COLORS_FIRST)
+})
+
+test('version 8 saves default the widget to open', () => {
+  const save = migrate({
+    version: 8,
+    images: [],
+    strategy: BotStrategy.ALL,
+    dropletStrategy: DropletStrategy.COLORS,
+    title: 't',
+  })
+  expect(save).toMatchObject({ widgetOpen: true })
 })
 
 test('malformed data is rejected instead of cast', () => {

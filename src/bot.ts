@@ -113,7 +113,8 @@ export class WPlaceBot {
   /** True while draw() walks this.images */
   protected drawing = false
 
-  public widget = new Widget(this)
+  public widgetOpen = true
+  public widget: Widget
 
   /** Used to wait for pixel data on marker set */
   protected markerPixelPositionResolvers: ((
@@ -132,9 +133,12 @@ export class WPlaceBot {
       this.strategy = save.strategy
       this.dropletStrategy = save.dropletStrategy
       this.title = save.title
+      this.widgetOpen = save.widgetOpen
     } else {
       this.title = 'WPlace-bot'
     }
+
+    this.widget = new Widget(this)
 
     // Templates placed in wplace's own manager that aren't in the save yet
     const known = new Set(save?.images.map((image) => image.wplaceId))
@@ -610,6 +614,7 @@ export class WPlaceBot {
       strategy: this.strategy,
       dropletStrategy: this.dropletStrategy,
       title: this.title,
+      widgetOpen: this.widgetOpen,
     }
   }
 
