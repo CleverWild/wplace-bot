@@ -1,7 +1,7 @@
 import { type BotStrategy, type DropletStrategy } from '../drawing/policy'
 import { type ImageSettings } from '../image/model'
 
-export const SAVE_VERSION = 9
+export const SAVE_VERSION = 10
 
 export type SavedImage = Omit<ImageSettings, 'disabledColors'> & {
   url: string
@@ -18,6 +18,8 @@ export type SavedBot = {
   dropletStrategy: DropletStrategy
   title: string
   widgetOpen: boolean
+  /** `[tileKey, countryId]` pairs learned from wplace */
+  tileCountries: [number, number][]
 }
 
 /**

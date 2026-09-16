@@ -58,9 +58,14 @@ type Calculation = {
 
 /**
  * Time left to paint `remaining` pixels, counting stored and regenerated
- * charges, and the ones droplets pay for when the bot is set to buy them
+ * charges, the ones droplets pay for when the bot is set to buy them, and
+ * what bought flags refund on `cashbackPixels` of them
  */
-export function etaText(bot: WPlaceBot, remaining: number): string {
+export function etaText(
+  bot: WPlaceBot,
+  remaining: number,
+  cashbackPixels: number,
+): string {
   const cooldownMs = bot.me?.charges.cooldownMs ?? 30000
   const minutes = estimateEtaMinutes(
     remaining,
@@ -70,6 +75,7 @@ export function etaText(bot: WPlaceBot, remaining: number): string {
     bot.lastMeAt === undefined ? 0 : Date.now() - bot.lastMeAt,
     bot.spendsOnCharges ? (bot.me?.droplets ?? 0) : undefined,
     bot.colorsToBuy().length,
+    cashbackPixels,
   )
   return formatEta(minutes)
 }
@@ -576,6 +582,11 @@ export class BotImage extends Base {
   ) {
     this.colorsStat = result.colorStat
     this.tasks = this.visible ? result.taskPositions : new Uint32Array(0)
+    // The ETA counts flag cashback per tile, so learn the tiles a moved image
+    // landed on. Known tiles cost nothing
+    void this.bot.fetchTileCountries([this]).then((learned) => {
+      if (learned) this.bot.widget.updateProgress()
+    })
     this.pixels = result.pixels
     this.$canvas.width = width
     this.$canvas.height = height
@@ -659,7 +670,7 @@ export class BotImage extends Base {
     const maxTasks = this.countedPixels
     const doneTasks = maxTasks - this.tasks.length / 2
     const percent = maxTasks ? doneTasks / maxTasks : 0
-    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${formatPercent(percent)} ETA: ${etaText(this.bot, this.tasks.length / 2)}`
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${formatPercent(percent)} ETA: ${etaText(this.bot, this.tasks.length / 2, this.bot.cashbackTasks(this))}`
     this.$progressLine.style.transform = `scaleX(${percent})`
   }
 

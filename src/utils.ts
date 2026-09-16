@@ -1,3 +1,5 @@
+import { FLAG_CASHBACK_PIXELS } from './flags'
+
 export function formatPercent(n: number) {
   if (Number.isNaN(n)) return '0%'
   if (n < 0.1) n = ((n * 1000) | 0) / 10
@@ -39,6 +41,9 @@ export const CHARGES_PER_PACK_WITH_PAYBACK =
  * earns turn into charges, minus what the `colorsToBuy` missing colors cost,
  * since those are paid for first. Leave it out and only natural regeneration
  * counts.
+ *
+ * `cashbackPixels` are the remaining pixels in countries whose flag is bought,
+ * each of which refunds a tenth of a charge.
  */
 export function estimateEtaMinutes(
   remaining: number,
@@ -48,6 +53,7 @@ export function estimateEtaMinutes(
   elapsedMs: number,
   droplets?: number,
   colorsToBuy = 0,
+  cashbackPixels = 0,
 ) {
   if (cooldownMs <= 0) return 0
   const regeneratedCharges = Math.max(0, elapsedMs) / cooldownMs
@@ -55,9 +61,11 @@ export function estimateEtaMinutes(
     Math.max(0, maxCharges),
     Math.max(0, charges) + regeneratedCharges,
   )
-  let needed = Math.max(0, remaining)
+  let needed =
+    Math.max(0, remaining) - Math.max(0, cashbackPixels) / FLAG_CASHBACK_PIXELS
   if (droplets !== undefined) {
-    const earned = Math.max(0, droplets) + needed * DROPLETS_PER_PIXEL
+    const earned =
+      Math.max(0, droplets) + Math.max(0, remaining) * DROPLETS_PER_PIXEL
     const spentOnColors = Math.max(0, colorsToBuy) * DROPLETS_PER_COLOR
     // Packs are bought as the run needs them, so the account maximum does not
     // cap what the shop adds, and whole packs are noise at this scale

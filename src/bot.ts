@@ -1,6 +1,15 @@
 import { wait } from '@softsky/utils'
 
 import { BotStrategy, DropletStrategy } from './drawing/policy'
+import {
+  cashbackCharges,
+  countCashbackTasks,
+  coveredTiles,
+  FLAG_CASHBACK_PIXELS,
+  ownsFlag,
+  tileFromKey,
+  tileKey,
+} from './flags'
 import { BotImage } from './image'
 import { UnownedColorStrategy } from './image/model'
 import { findMap, type WplaceMap } from './map'
@@ -107,6 +116,21 @@ export class WPlaceBot {
   /** Images on canvas */
   public images: BotImage[] = []
 
+  /** Country of every tile seen so far. It never changes, so it is saved */
+  public tileCountries = new Map<number, number>()
+
+  /** Tiles whose country is being asked for right now */
+  protected pendingTiles = new Set<number>()
+
+  /** `cashbackTasks` per task array, dropped when flags or tiles change */
+  protected cashbackCache = new WeakMap<
+    Uint32Array,
+    { stamp: string; count: number }
+  >()
+
+  /** fetch before the interceptor wrapped it */
+  protected originalFetch = globalThis.fetch.bind(globalThis)
+
   /** Autodraw interval */
   public autoDrawInterval?: ReturnType<typeof setInterval>
 
@@ -134,6 +158,7 @@ export class WPlaceBot {
       this.dropletStrategy = save.dropletStrategy
       this.title = save.title
       this.widgetOpen = save.widgetOpen
+      this.tileCountries = new Map(save.tileCountries)
     } else {
       this.title = 'WPlace-bot'
     }
@@ -278,6 +303,7 @@ export class WPlaceBot {
               .then((x) => {
                 this.me = x as Me
               }),
+            this.fetchTileCountries(this.images),
           ]),
         )
 
@@ -286,10 +312,12 @@ export class WPlaceBot {
 
         // Calculate tasks and colors to buy
         let tasksLength = 0
+        let cashbackLength = 0
         for (let index = 0; index < this.images.length; index++) {
           const image = this.images[index]!
           if (!image.visible) continue
           tasksLength += image.tasks.length / 2
+          cashbackLength += this.cashbackTasks(image)
         }
         const colorToBuy = this.colorsToBuy()[0]
         if (
@@ -318,7 +346,10 @@ export class WPlaceBot {
           const packs = Math.min(
             // Each pack pays for part of the next one, so fewer are needed
             Math.ceil(
-              (tasksLength - initialCharges) / CHARGES_PER_PACK_WITH_PAYBACK,
+              (tasksLength -
+                cashbackLength / FLAG_CASHBACK_PIXELS -
+                initialCharges) /
+                CHARGES_PER_PACK_WITH_PAYBACK,
             ),
             Math.floor(this.me!.droplets / DROPLETS_PER_PACK),
             // Charges over the account maximum are bought for nothing
@@ -455,12 +486,19 @@ export class WPlaceBot {
         const meBeforePaint = this.lastMeAt
         const painted =
           submit && queued > 0 ? await this.submitPaint(queued) : 0
+        let paintedCashback = 0
+        const cashbackTiles = this.cashbackTiles()
         // A batch is all-or-nothing in practice, and which pixels a short
         // answer left out is not knowable, so keep the tasks and let the next
         // run rebuild them from the map
         if (painted >= queued)
-          for (const [image, value] of indexes)
+          for (const [image, value] of indexes) {
+            paintedCashback += countCashbackTasks(
+              image.tasks.subarray(0, value * 2),
+              cashbackTiles,
+            )
             image.tasks = image.tasks.subarray(value * 2)
+          }
 
         this.widget.update()
 
@@ -468,7 +506,9 @@ export class WPlaceBot {
         // our copy of /me. wplace refetches it after some paints, so only
         // correct the numbers by hand when it did not
         if (this.lastMeAt === meBeforePaint) {
-          this.me!.charges.count = Math.max(0, this.me!.charges.count - painted)
+          this.me!.charges.count =
+            Math.max(0, this.me!.charges.count - painted) +
+            cashbackCharges(paintedCashback)
           this.me!.droplets += painted * DROPLETS_PER_PIXEL
           this.lastMeAt = Date.now()
         }
@@ -478,10 +518,15 @@ export class WPlaceBot {
         // Auto-Draw, which deliberately wakes up with the bar almost full.
         // Painting something is the condition that keeps this from spinning:
         // a run that paints nothing cannot pay for the next one
+        // Flag cashback lands on the bar at once, so spend it right away too.
+        // Each refund is a tenth of what earned it, so this dies out quickly
+        const refunded =
+          cashbackCharges(paintedCashback) > 0 &&
+          Math.floor(this.me!.charges.count) > 0
         if (
-          wantsCharges &&
           painted > 0 &&
-          this.me!.droplets >= DROPLETS_PER_PACK &&
+          ((wantsCharges && this.me!.droplets >= DROPLETS_PER_PACK) ||
+            refunded) &&
           this.images.some((image) => image.visible && image.tasks.length > 0)
         )
           return this.draw(submit)
@@ -551,9 +596,12 @@ export class WPlaceBot {
     const cooldownMs = this.me?.charges.cooldownMs ?? 30000
     const maxCharges = this.me?.charges.max ?? 100
     let tasks = 0
+    let cashback = 0
     for (let index = 0; index < this.images.length; index++) {
       const image = this.images[index]!
-      if (image.visible) tasks += image.tasks.length / 2
+      if (!image.visible) continue
+      tasks += image.tasks.length / 2
+      cashback += this.cashbackTasks(image)
     }
     // Nothing left to paint: look again once the bar has filled anyway
     if (tasks === 0) return maxCharges * cooldownMs
@@ -563,7 +611,8 @@ export class WPlaceBot {
         CHARGES_PER_PACK
       : 0
     const painting = Math.min(tasks, maxCharges)
-    const missing = painting - (this.me?.charges.count ?? 0) - bought
+    const refund = (painting * cashback) / tasks / FLAG_CASHBACK_PIXELS
+    const missing = painting - refund - (this.me?.charges.count ?? 0) - bought
     const lead = DRAW_BASE_MS + painting * DRAW_MS_PER_PIXEL
     // Never come back in a tight loop, even when the numbers say "now"
     return Math.max(cooldownMs, missing * cooldownMs - lead)
@@ -615,6 +664,7 @@ export class WPlaceBot {
       dropletStrategy: this.dropletStrategy,
       title: this.title,
       widgetOpen: this.widgetOpen,
+      tileCountries: [...this.tileCountries],
     }
   }
 
@@ -883,6 +933,79 @@ export class WPlaceBot {
     })
   }
 
+  /** Tiles whose country's flag the account has bought */
+  public cashbackTiles() {
+    const tiles = new Set<number>()
+    const flags = this.me?.flagsBitmap
+    if (!flags) return tiles
+    for (const [key, countryId] of this.tileCountries)
+      if (ownsFlag(flags, countryId)) tiles.add(key)
+    return tiles
+  }
+
+  /** How many of the image's tasks a bought flag pays a refund on */
+  public cashbackTasks(image: BotImage) {
+    const stamp = `${this.me?.flagsBitmap ?? ''}|${this.tileCountries.size}`
+    const cached = this.cashbackCache.get(image.tasks)
+    if (cached?.stamp === stamp) return cached.count
+    const count = countCashbackTasks(image.tasks, this.cashbackTiles())
+    this.cashbackCache.set(image.tasks, { stamp, count })
+    return count
+  }
+
+  /**
+   * Asks wplace for the country of every tile the images overlap that is not
+   * known yet. A tile has one country, so one pixel per tile is enough.
+   * Resolves to whether anything new was learned
+   */
+  public async fetchTileCountries(images: readonly BotImage[]) {
+    const missing = new Set<number>()
+    for (const image of images) {
+      if (!image.visible) continue
+      for (const key of coveredTiles(
+        image.position.globalX,
+        image.position.globalY,
+        image.width,
+        image.height,
+      ))
+        if (!this.tileCountries.has(key) && !this.pendingTiles.has(key))
+          missing.add(key)
+    }
+    let learned = false
+    for (const key of missing) {
+      this.pendingTiles.add(key)
+      const [tileX, tileY] = tileFromKey(key)
+      try {
+        // Past the interceptor, or the lookup would pass for a marker click
+        const response = await this.originalFetch(
+          `https://backend.wplace.live/s0/pixel/${tileX}/${tileY}?x=500&y=500`,
+          { credentials: 'include' },
+        )
+        if (
+          response.ok &&
+          this.learnTileCountry(tileX, tileY, await response.json())
+        )
+          learned = true
+      } catch {
+        // An unknown tile only goes without cashback until the next try
+      } finally {
+        this.pendingTiles.delete(key)
+      }
+    }
+    if (learned) void save(this)
+    return learned
+  }
+
+  protected learnTileCountry(tileX: number, tileY: number, info: unknown) {
+    const countryId = (info as { region?: { countryId?: unknown } } | null)
+      ?.region?.countryId
+    if (typeof countryId !== 'number') return false
+    const key = tileKey(tileX, tileY)
+    if (this.tileCountries.get(key) === countryId) return false
+    this.tileCountries.set(key, countryId)
+    return true
+  }
+
   /** Zoom in until one map pixel is at least `pixelSize` screen pixels */
   protected zoomIn(pixelSize: number) {
     const zoom = zoomForPixelSize(pixelSize)
@@ -891,7 +1014,7 @@ export class WPlaceBot {
 
   /** Start listening to fetch requests */
   protected registerFetchInterceptor() {
-    const originalFetch = globalThis.fetch
+    const originalFetch = this.originalFetch
     const pixelRegExp =
       /https:\/\/backend.wplace.live\/s\d+\/pixel\/(-?\d+)\/(-?\d+)\?x=(-?\d+)&y=(-?\d+)/
     // Every staged pixel leaves in one batched request, whatever tiles it spans
@@ -919,6 +1042,13 @@ export class WPlaceBot {
       }
       const pixelMatch = pixelRegExp.exec(url)
       if (pixelMatch) {
+        // wplace asks for pixel info on every click, and it names the country
+        void cloned
+          .json()
+          .then((info: unknown) => {
+            this.learnTileCountry(+pixelMatch[1]!, +pixelMatch[2]!, info)
+          })
+          .catch(() => undefined)
         for (
           let index = 0;
           index < this.markerPixelPositionResolvers.length;

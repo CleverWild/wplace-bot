@@ -24,10 +24,20 @@ type Fields = Record<string, unknown> & {
   strategy?: unknown
   dropletStrategy?: unknown
   widgetOpen?: unknown
+  tileCountries?: unknown
 }
 
 function isFields(value: unknown): value is Fields {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isTileCountry(value: unknown): value is [number, number] {
+  return (
+    Array.isArray(value) &&
+    value.length === 2 &&
+    typeof value[0] === 'number' &&
+    typeof value[1] === 'number'
+  )
 }
 
 function versionOf(fields: Fields) {
@@ -123,11 +133,16 @@ export function migrate(old: unknown): LoadedBot {
       version: 8,
     }
   if (versionOf(save) < 9) save = { ...save, widgetOpen: true, version: 9 }
+  if (versionOf(save) < 10) save = { ...save, tileCountries: [], version: 10 }
   if (!Array.isArray(save.images)) throw new Error('Save has no image list')
   // Images carry their own version, so migrate them whatever the save says
   return {
     ...(save as Omit<LoadedBot, 'images'>),
     version: SAVE_VERSION,
     images: save.images.map(migrateImage),
+    // Only a cache, so a broken entry is dropped rather than failing the load
+    tileCountries: Array.isArray(save.tileCountries)
+      ? save.tileCountries.filter(isTileCountry)
+      : [],
   }
 }

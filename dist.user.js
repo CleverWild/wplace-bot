@@ -72,6 +72,39 @@ var SESSION_ID = Math.floor(Math.random() * 4503599627370496).toString(16).padSt
 function wait(time) {
   return new Promise((r) => setTimeout(r, time));
 }
+class SimpleEventSource {
+  handlers = new Map;
+  send(name, data) {
+    return this.handlers.get(name)?.map((handler) => handler(data)) ?? [];
+  }
+  on(name, handler) {
+    let handlers = this.handlers.get(name);
+    if (!handlers) {
+      handlers = [];
+      this.handlers.set(name, handlers);
+    }
+    handlers.push(handler);
+    return () => {
+      removeFromArray(handlers, handler);
+      if (handlers.length === 0)
+        this.handlers.delete(name);
+    };
+  }
+  off(name, handler) {
+    const handlers = this.handlers.get(name);
+    if (!handlers)
+      return;
+    removeFromArray(handlers, handler);
+    if (handlers.length === 0)
+      this.handlers.delete(name);
+  }
+  get source() {
+    return {
+      on: this.on.bind(this),
+      off: this.off.bind(this)
+    };
+  }
+}
 function promisifyEventSource(target, resolveEvents, rejectEvents = ["error"], subName = "addEventListener") {
   return new Promise((resolve, reject) => {
     for (let index = 0;index < resolveEvents.length; index++)
@@ -82,6 +115,121 @@ function promisifyEventSource(target, resolveEvents, rejectEvents = ["error"], s
 }
 // node_modules/@softsky/utils/dist/signals.js
 var effectsMap = new WeakMap;
+// node_modules/@softsky/utils/dist/time.js
+class SpeedCalculator {
+  size;
+  historyTime;
+  sum = 0;
+  history = [];
+  statsCached;
+  startTime = Date.now();
+  constructor(size, historyTime = 15000) {
+    this.size = size;
+    this.historyTime = historyTime;
+  }
+  push(chunk) {
+    if (chunk < 0)
+      throw new Error("Negative chunk size");
+    const { time, historyTime } = this.getTime();
+    this.history.push({ time, chunk });
+    if (this.history[0] && this.history[0].time + historyTime < time)
+      this.history.shift();
+    this.sum += chunk;
+    delete this.statsCached;
+  }
+  get stats() {
+    if (!this.statsCached) {
+      const speed = this.history.reduce((sum, entry) => sum + entry.chunk, 0) / this.getTime().historyTime * 1000;
+      this.statsCached = this.size === undefined ? { speed } : {
+        speed,
+        percent: this.sum / this.size,
+        eta: ~~((this.size - this.sum) / speed) * 1000
+      };
+    }
+    return this.statsCached;
+  }
+  getTime() {
+    const time = Date.now();
+    const timeSinceStart = time - this.startTime;
+    const historyTime = Math.min(timeSinceStart, this.historyTime);
+    return { time, historyTime };
+  }
+}
+// src/coordinates.ts
+var WORLD_TILE_SIZE = 1000;
+var WORLD_TILES = 2048;
+var WORLD_PIXEL_SIZE = WORLD_TILE_SIZE * WORLD_TILES;
+function worldToLatitude(y) {
+  return (2 * Math.atan(Math.exp(-(y / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI))) - Math.PI / 2) * 180 / Math.PI;
+}
+function worldToLongitude(x) {
+  return (x / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI) * 180 / Math.PI;
+}
+function latitudeToWorld(latitude) {
+  return (-Math.log(Math.tan(Math.PI / 4 + latitude * Math.PI / 180 / 2)) + Math.PI) / (2 * Math.PI) * WORLD_PIXEL_SIZE;
+}
+function longitudeToWorld(longitude) {
+  return (longitude * Math.PI / 180 + Math.PI) / (2 * Math.PI) * WORLD_PIXEL_SIZE;
+}
+function pixelSizeForZoom(zoom) {
+  return 512 * 2 ** zoom / WORLD_PIXEL_SIZE;
+}
+function zoomForPixelSize(pixelSize) {
+  return Math.log2(pixelSize * WORLD_PIXEL_SIZE / 512);
+}
+
+// src/flags.ts
+var FLAG_CASHBACK_PIXELS = 10;
+function ownsFlag(flagsBitmap, countryId) {
+  if (!flagsBitmap)
+    return false;
+  let bytes;
+  try {
+    bytes = atob(flagsBitmap);
+  } catch {
+    return false;
+  }
+  const byteIndex = Math.floor(countryId / 8);
+  if (byteIndex >= bytes.length)
+    return false;
+  return (bytes.charCodeAt(bytes.length - 1 - byteIndex) & 1 << countryId % 8) !== 0;
+}
+function tileKey(tileX, tileY) {
+  return tileY * WORLD_TILES + tileX;
+}
+function tileFromKey(key) {
+  return [key % WORLD_TILES, Math.floor(key / WORLD_TILES)];
+}
+function coveredTiles(globalX, globalY, width, height) {
+  const keys = [];
+  const lastX = Math.floor((globalX + Math.max(1, width) - 1) / WORLD_TILE_SIZE);
+  const lastY = Math.floor((globalY + Math.max(1, height) - 1) / WORLD_TILE_SIZE);
+  for (let y = Math.floor(globalY / WORLD_TILE_SIZE);y <= lastY; y++)
+    for (let x = Math.floor(globalX / WORLD_TILE_SIZE);x <= lastX; x++)
+      keys.push(tileKey(x, y));
+  return keys;
+}
+function countCashbackTasks(tasks, cashbackTiles) {
+  if (cashbackTiles.size === 0)
+    return 0;
+  let count = 0;
+  let lastKey = -1;
+  let lastHit = false;
+  for (let index = 0;index < tasks.length; index += 2) {
+    const key = tileKey(tasks[index] / WORLD_TILE_SIZE | 0, tasks[index + 1] / WORLD_TILE_SIZE | 0);
+    if (key !== lastKey) {
+      lastKey = key;
+      lastHit = cashbackTiles.has(key);
+    }
+    if (lastHit)
+      count++;
+  }
+  return count;
+}
+function cashbackCharges(pixels) {
+  return Math.floor(Math.max(0, pixels) / FLAG_CASHBACK_PIXELS);
+}
+
 // src/obfuscator.ts
 var SID = Array.from({ length: 16 }, () => (10 + Math.random() * 26 | 0).toString(36)).join("");
 function obfucsateHTML(html) {
@@ -466,11 +614,14 @@ var image_default = `<div class="topbar">
 `;
 
 // src/persistence/schema.ts
-var SAVE_VERSION = 9;
+var SAVE_VERSION = 10;
 
 // src/persistence/migrations.ts
 function isFields(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isTileCountry(value) {
+  return Array.isArray(value) && value.length === 2 && typeof value[0] === "number" && typeof value[1] === "number";
 }
 function versionOf(fields) {
   return typeof fields.version === "number" ? fields.version : 0;
@@ -551,12 +702,15 @@ function migrate(old) {
     };
   if (versionOf(save) < 9)
     save = { ...save, widgetOpen: true, version: 9 };
+  if (versionOf(save) < 10)
+    save = { ...save, tileCountries: [], version: 10 };
   if (!Array.isArray(save.images))
     throw new Error("Save has no image list");
   return {
     ...save,
     version: SAVE_VERSION,
-    images: save.images.map(migrateImage)
+    images: save.images.map(migrateImage),
+    tileCountries: Array.isArray(save.tileCountries) ? save.tileCountries.filter(isTileCountry) : []
   };
 }
 
@@ -761,14 +915,14 @@ var CHARGES_PER_PACK = 30;
 var DROPLETS_PER_COLOR = 2000;
 var CHARGE_PAYBACK = DROPLETS_PER_PIXEL * CHARGES_PER_PACK / DROPLETS_PER_PACK;
 var CHARGES_PER_PACK_WITH_PAYBACK = CHARGES_PER_PACK / (1 - CHARGE_PAYBACK);
-function estimateEtaMinutes(remaining, charges, maxCharges, cooldownMs, elapsedMs, droplets, colorsToBuy = 0) {
+function estimateEtaMinutes(remaining, charges, maxCharges, cooldownMs, elapsedMs, droplets, colorsToBuy = 0, cashbackPixels = 0) {
   if (cooldownMs <= 0)
     return 0;
   const regeneratedCharges = Math.max(0, elapsedMs) / cooldownMs;
   const availableCharges = Math.min(Math.max(0, maxCharges), Math.max(0, charges) + regeneratedCharges);
-  let needed = Math.max(0, remaining);
+  let needed = Math.max(0, remaining) - Math.max(0, cashbackPixels) / FLAG_CASHBACK_PIXELS;
   if (droplets !== undefined) {
-    const earned = Math.max(0, droplets) + needed * DROPLETS_PER_PIXEL;
+    const earned = Math.max(0, droplets) + Math.max(0, remaining) * DROPLETS_PER_PIXEL;
     const spentOnColors = Math.max(0, colorsToBuy) * DROPLETS_PER_COLOR;
     needed -= Math.max(0, earned - spentOnColors) * CHARGES_PER_PACK / DROPLETS_PER_PACK;
   }
@@ -1702,29 +1856,6 @@ function workerClearMapCache() {
   worker.postMessage("CLEAR_MAP_CACHE");
 }
 
-// src/coordinates.ts
-var WORLD_TILE_SIZE = 1000;
-var WORLD_TILES = 2048;
-var WORLD_PIXEL_SIZE = WORLD_TILE_SIZE * WORLD_TILES;
-function worldToLatitude(y) {
-  return (2 * Math.atan(Math.exp(-(y / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI))) - Math.PI / 2) * 180 / Math.PI;
-}
-function worldToLongitude(x) {
-  return (x / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI) * 180 / Math.PI;
-}
-function latitudeToWorld(latitude) {
-  return (-Math.log(Math.tan(Math.PI / 4 + latitude * Math.PI / 180 / 2)) + Math.PI) / (2 * Math.PI) * WORLD_PIXEL_SIZE;
-}
-function longitudeToWorld(longitude) {
-  return (longitude * Math.PI / 180 + Math.PI) / (2 * Math.PI) * WORLD_PIXEL_SIZE;
-}
-function pixelSizeForZoom(zoom) {
-  return 512 * 2 ** zoom / WORLD_PIXEL_SIZE;
-}
-function zoomForPixelSize(pixelSize) {
-  return Math.log2(pixelSize * WORLD_PIXEL_SIZE / 512);
-}
-
 // src/site/projection.ts
 function toViewportPosition(map, globalX, globalY) {
   const point = map.project([
@@ -1926,9 +2057,9 @@ function toWplaceFile(image, order = 0) {
 }
 
 // src/image.ts
-function etaText(bot, remaining) {
+function etaText(bot, remaining, cashbackPixels) {
   const cooldownMs = bot.me?.charges.cooldownMs ?? 30000;
-  const minutes = estimateEtaMinutes(remaining, bot.me?.charges.count ?? 0, bot.me?.charges.max ?? 0, cooldownMs, bot.lastMeAt === undefined ? 0 : Date.now() - bot.lastMeAt, bot.spendsOnCharges ? bot.me?.droplets ?? 0 : undefined, bot.colorsToBuy().length);
+  const minutes = estimateEtaMinutes(remaining, bot.me?.charges.count ?? 0, bot.me?.charges.max ?? 0, cooldownMs, bot.lastMeAt === undefined ? 0 : Date.now() - bot.lastMeAt, bot.spendsOnCharges ? bot.me?.droplets ?? 0 : undefined, bot.colorsToBuy().length, cashbackPixels);
   return formatEta(minutes);
 }
 function encodeDataUrl(canvas) {
@@ -2327,6 +2458,10 @@ class BotImage extends Base2 {
   applyCalculation({ result, width, height }, progress) {
     this.colorsStat = result.colorStat;
     this.tasks = this.visible ? result.taskPositions : new Uint32Array(0);
+    this.bot.fetchTileCountries([this]).then((learned) => {
+      if (learned)
+        this.bot.widget.updateProgress();
+    });
     this.pixels = result.pixels;
     this.$canvas.width = width;
     this.$canvas.height = height;
@@ -2404,7 +2539,7 @@ class BotImage extends Base2 {
     const maxTasks = this.countedPixels;
     const doneTasks = maxTasks - this.tasks.length / 2;
     const percent = maxTasks ? doneTasks / maxTasks : 0;
-    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${formatPercent(percent)} ETA: ${etaText(this.bot, this.tasks.length / 2)}`;
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${formatPercent(percent)} ETA: ${etaText(this.bot, this.tasks.length / 2, this.bot.cashbackTasks(this))}`;
     this.$progressLine.style.transform = `scaleX(${percent})`;
   }
   destroy() {
@@ -3337,16 +3472,18 @@ class Widget extends Base2 {
   updateProgress() {
     let maxTasks = 0;
     let totalTasks = 0;
+    let cashbackTasks = 0;
     for (let index = 0;index < this.bot.images.length; index++) {
       const image = this.bot.images[index];
       if (image.disabled)
         continue;
       maxTasks += image.countedPixels;
       totalTasks += image.tasks.length / 2;
+      cashbackTasks += this.bot.cashbackTasks(image);
     }
     const doneTasks = maxTasks - totalTasks;
     const percent = maxTasks ? doneTasks / maxTasks : 0;
-    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${formatPercent(percent)} ETA: ${etaText(this.bot, totalTasks)}`;
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${formatPercent(percent)} ETA: ${etaText(this.bot, totalTasks, cashbackTasks)}`;
     this.$progressLine.style.transform = `scaleX(${percent})`;
     for (let index = 0;index < this.bot.images.length; index++) {
       const image = this.bot.images[index];
@@ -3394,6 +3531,10 @@ class WPlaceBot {
     return this.dropletStrategy !== "COLORS" /* COLORS */;
   }
   images = [];
+  tileCountries = new Map;
+  pendingTiles = new Set;
+  cashbackCache = new WeakMap;
+  originalFetch = globalThis.fetch.bind(globalThis);
   autoDrawInterval;
   drawing = false;
   widgetOpen = true;
@@ -3407,6 +3548,7 @@ class WPlaceBot {
       this.dropletStrategy = save2.dropletStrategy;
       this.title = save2.title;
       this.widgetOpen = save2.widgetOpen;
+      this.tileCountries = new Map(save2.tileCountries);
     } else {
       this.title = "WPlace-bot";
     }
@@ -3506,16 +3648,19 @@ Developer will try to fix your save. Be vary that github issues are public, and 
           credentials: "include"
         }).then((x) => x.json()).then((x) => {
           this.me = x;
-        })
+        }),
+        this.fetchTileCountries(this.images)
       ]));
       const initialCharges = Math.floor(this.me.charges.count);
       let charges = initialCharges;
       let tasksLength = 0;
+      let cashbackLength = 0;
       for (let index = 0;index < this.images.length; index++) {
         const image = this.images[index];
         if (!image.visible)
           continue;
         tasksLength += image.tasks.length / 2;
+        cashbackLength += this.cashbackTasks(image);
       }
       const colorToBuy = this.colorsToBuy()[0];
       if (this.me.droplets >= DROPLETS_PER_COLOR && colorToBuy !== undefined) {
@@ -3529,7 +3674,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       }
       const wantsCharges = this.dropletStrategy === "COLORS_FIRST" /* COLORS_FIRST */ && colorToBuy === undefined;
       if (wantsCharges && this.me.droplets < dropletsBeforePurchase) {
-        const packs = Math.min(Math.ceil((tasksLength - initialCharges) / CHARGES_PER_PACK_WITH_PAYBACK), Math.floor(this.me.droplets / DROPLETS_PER_PACK), Math.floor((this.me.charges.max - initialCharges) / CHARGES_PER_PACK));
+        const packs = Math.min(Math.ceil((tasksLength - cashbackLength / FLAG_CASHBACK_PIXELS - initialCharges) / CHARGES_PER_PACK_WITH_PAYBACK), Math.floor(this.me.droplets / DROPLETS_PER_PACK), Math.floor((this.me.charges.max - initialCharges) / CHARGES_PER_PACK));
         const droplets = this.me.droplets;
         if (packs > 0 && await this.buyChargePacks(packs))
           return this.draw(submit, droplets);
@@ -3626,16 +3771,21 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       const queued = initialCharges - charges;
       const meBeforePaint = this.lastMeAt;
       const painted = submit && queued > 0 ? await this.submitPaint(queued) : 0;
+      let paintedCashback = 0;
+      const cashbackTiles = this.cashbackTiles();
       if (painted >= queued)
-        for (const [image, value] of indexes)
+        for (const [image, value] of indexes) {
+          paintedCashback += countCashbackTasks(image.tasks.subarray(0, value * 2), cashbackTiles);
           image.tasks = image.tasks.subarray(value * 2);
+        }
       this.widget.update();
       if (this.lastMeAt === meBeforePaint) {
-        this.me.charges.count = Math.max(0, this.me.charges.count - painted);
+        this.me.charges.count = Math.max(0, this.me.charges.count - painted) + cashbackCharges(paintedCashback);
         this.me.droplets += painted * DROPLETS_PER_PIXEL;
         this.lastMeAt = Date.now();
       }
-      if (wantsCharges && painted > 0 && this.me.droplets >= DROPLETS_PER_PACK && this.images.some((image) => image.visible && image.tasks.length > 0))
+      const refunded = cashbackCharges(paintedCashback) > 0 && Math.floor(this.me.charges.count) > 0;
+      if (painted > 0 && (wantsCharges && this.me.droplets >= DROPLETS_PER_PACK || refunded) && this.images.some((image) => image.visible && image.tasks.length > 0))
         return this.draw(submit);
     }, () => {
       this.drawing = false;
@@ -3669,17 +3819,21 @@ Developer will try to fix your save. Be vary that github issues are public, and 
     const cooldownMs = this.me?.charges.cooldownMs ?? 30000;
     const maxCharges = this.me?.charges.max ?? 100;
     let tasks = 0;
+    let cashback = 0;
     for (let index = 0;index < this.images.length; index++) {
       const image = this.images[index];
-      if (image.visible)
-        tasks += image.tasks.length / 2;
+      if (!image.visible)
+        continue;
+      tasks += image.tasks.length / 2;
+      cashback += this.cashbackTasks(image);
     }
     if (tasks === 0)
       return maxCharges * cooldownMs;
     const buysCharges = this.spendsOnCharges && this.colorsToBuy().length === 0;
     const bought = buysCharges ? Math.floor((this.me?.droplets ?? 0) / DROPLETS_PER_PACK) * CHARGES_PER_PACK : 0;
     const painting = Math.min(tasks, maxCharges);
-    const missing = painting - (this.me?.charges.count ?? 0) - bought;
+    const refund = painting * cashback / tasks / FLAG_CASHBACK_PIXELS;
+    const missing = painting - refund - (this.me?.charges.count ?? 0) - bought;
     const lead = DRAW_BASE_MS + painting * DRAW_MS_PER_PIXEL;
     return Math.max(cooldownMs, missing * cooldownMs - lead);
   }
@@ -3723,7 +3877,8 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       strategy: this.strategy,
       dropletStrategy: this.dropletStrategy,
       title: this.title,
-      widgetOpen: this.widgetOpen
+      widgetOpen: this.widgetOpen,
+      tileCountries: [...this.tileCountries]
     };
   }
   async importSiteTemplates(templates) {
@@ -3899,13 +4054,67 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       });
     });
   }
+  cashbackTiles() {
+    const tiles = new Set;
+    const flags = this.me?.flagsBitmap;
+    if (!flags)
+      return tiles;
+    for (const [key, countryId] of this.tileCountries)
+      if (ownsFlag(flags, countryId))
+        tiles.add(key);
+    return tiles;
+  }
+  cashbackTasks(image) {
+    const stamp = `${this.me?.flagsBitmap ?? ""}|${this.tileCountries.size}`;
+    const cached = this.cashbackCache.get(image.tasks);
+    if (cached?.stamp === stamp)
+      return cached.count;
+    const count = countCashbackTasks(image.tasks, this.cashbackTiles());
+    this.cashbackCache.set(image.tasks, { stamp, count });
+    return count;
+  }
+  async fetchTileCountries(images) {
+    const missing = new Set;
+    for (const image of images) {
+      if (!image.visible)
+        continue;
+      for (const key of coveredTiles(image.position.globalX, image.position.globalY, image.width, image.height))
+        if (!this.tileCountries.has(key) && !this.pendingTiles.has(key))
+          missing.add(key);
+    }
+    let learned = false;
+    for (const key of missing) {
+      this.pendingTiles.add(key);
+      const [tileX, tileY] = tileFromKey(key);
+      try {
+        const response = await this.originalFetch(`https://backend.wplace.live/s0/pixel/${tileX}/${tileY}?x=500&y=500`, { credentials: "include" });
+        if (response.ok && this.learnTileCountry(tileX, tileY, await response.json()))
+          learned = true;
+      } catch {} finally {
+        this.pendingTiles.delete(key);
+      }
+    }
+    if (learned)
+      save(this);
+    return learned;
+  }
+  learnTileCountry(tileX, tileY, info) {
+    const countryId = info?.region?.countryId;
+    if (typeof countryId !== "number")
+      return false;
+    const key = tileKey(tileX, tileY);
+    if (this.tileCountries.get(key) === countryId)
+      return false;
+    this.tileCountries.set(key, countryId);
+    return true;
+  }
   zoomIn(pixelSize) {
     const zoom = zoomForPixelSize(pixelSize);
     if (this.map.getZoom() < zoom)
       this.map.jumpTo({ zoom });
   }
   registerFetchInterceptor() {
-    const originalFetch = globalThis.fetch;
+    const originalFetch = this.originalFetch;
     const pixelRegExp = /https:\/\/backend.wplace.live\/s\d+\/pixel\/(-?\d+)\/(-?\d+)\?x=(-?\d+)&y=(-?\d+)/;
     const paintRegExp = /^https:\/\/backend\.wplace\.live\/paint(?:\?|$)/;
     globalThis.fetch = async (request, options) => {
@@ -3933,6 +4142,11 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       }
       const pixelMatch = pixelRegExp.exec(url);
       if (pixelMatch) {
+        cloned.json().then((info) => {
+          this.learnTileCountry(+pixelMatch[1], +pixelMatch[2], info);
+        }).catch(() => {
+          return;
+        });
         for (let index = 0;index < this.markerPixelPositionResolvers.length; index++)
           this.markerPixelPositionResolvers[index](new WorldPosition(this, +pixelMatch[1], +pixelMatch[2], +pixelMatch[3], +pixelMatch[4]));
         this.markerPixelPositionResolvers.length = 0;

@@ -228,15 +228,17 @@ export class Widget extends Base {
   public updateProgress() {
     let maxTasks = 0
     let totalTasks = 0
+    let cashbackTasks = 0
     for (let index = 0; index < this.bot.images.length; index++) {
       const image = this.bot.images[index]!
       if (image.disabled) continue
       maxTasks += image.countedPixels
       totalTasks += image.tasks.length / 2
+      cashbackTasks += this.bot.cashbackTasks(image)
     }
     const doneTasks = maxTasks - totalTasks
     const percent = maxTasks ? doneTasks / maxTasks : 0
-    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${formatPercent(percent)} ETA: ${etaText(this.bot, totalTasks)}`
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${formatPercent(percent)} ETA: ${etaText(this.bot, totalTasks, cashbackTasks)}`
     this.$progressLine.style.transform = `scaleX(${percent})`
     for (let index = 0; index < this.bot.images.length; index++) {
       const image = this.bot.images[index]!

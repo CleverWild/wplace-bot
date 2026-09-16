@@ -44,6 +44,7 @@ test('a current save passes through unchanged', () => {
     dropletStrategy: DropletStrategy.COLORS_FIRST,
     title: 'mine',
     widgetOpen: false,
+    tileCountries: [[1_445_064, 82]],
   }
   expect(migrate(structuredClone(save))).toEqual(save)
 })
@@ -131,6 +132,7 @@ test('a save from before version 3 gets a title and colors-only droplets', () =>
     dropletStrategy: DropletStrategy.COLORS,
     title: 'WPlace-bot',
     widgetOpen: true,
+    tileCountries: [],
   })
 })
 
@@ -154,6 +156,31 @@ test('version 8 saves default the widget to open', () => {
     title: 't',
   })
   expect(save).toMatchObject({ widgetOpen: true })
+})
+
+test('version 9 saves start with no known tile countries', () => {
+  const save = migrate({
+    version: 9,
+    images: [],
+    strategy: BotStrategy.ALL,
+    dropletStrategy: DropletStrategy.COLORS,
+    title: 't',
+    widgetOpen: true,
+  })
+  expect(save.tileCountries).toEqual([])
+})
+
+test('a broken tile country cache is dropped, not trusted', () => {
+  const save = migrate({
+    version: SAVE_VERSION,
+    images: [],
+    strategy: BotStrategy.ALL,
+    dropletStrategy: DropletStrategy.COLORS,
+    title: 't',
+    widgetOpen: true,
+    tileCountries: [[1, 2], [3], 'x', [4, '5']],
+  })
+  expect(save.tileCountries).toEqual([[1, 2]])
 })
 
 test('malformed data is rejected instead of cast', () => {

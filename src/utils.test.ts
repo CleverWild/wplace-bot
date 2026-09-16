@@ -57,6 +57,14 @@ test('spends droplets on missing colors before charges', () => {
   expect(estimateEtaMinutes(100, 0, 100, 30_000, 0, 2600, 1)).toBe(29)
 })
 
+test('a bought flag pays back a charge for every ten pixels in its country', () => {
+  expect(estimateEtaMinutes(100, 0, 100, 30_000, 0, undefined, 0, 60)).toBe(47)
+})
+
+test('flag cashback adds to what droplets pay back', () => {
+  expect(estimateEtaMinutes(100, 0, 100, 30_000, 0, 0, 0, 100)).toBe(42)
+})
+
 test('leaves nothing for charges when colors eat the whole balance', () => {
   expect(estimateEtaMinutes(100, 0, 100, 30_000, 0, 2600, 2)).toBe(50)
 })
