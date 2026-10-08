@@ -159,7 +159,7 @@ export class Widget extends Base {
       }
       $canvas.title = 'Go to template'
       $canvas.addEventListener('click', () => {
-        image.position.moveScreenTo()
+        image.position.moveScreenTo(image.width, image.height)
       })
 
       const $name = querySelector<HTMLSpanElement>($image, '.name')!
