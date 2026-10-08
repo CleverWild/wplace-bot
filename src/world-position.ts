@@ -1,5 +1,12 @@
 import { type WPlaceBot } from './bot'
-import { pixelSizeForZoom, type Position, WORLD_TILE_SIZE } from './coordinates'
+import {
+  pixelSizeForZoom,
+  type Position,
+  WORLD_TILE_SIZE,
+  zoomForPixelSize,
+  worldToLatitude,
+  worldToLongitude,
+} from './coordinates'
 import { fromViewportPosition, toViewportPosition } from './site/projection'
 
 export {
@@ -86,12 +93,18 @@ export class WorldPosition {
     return toViewportPosition(this.bot.map, this.globalX, this.globalY)
   }
 
-  /** Scroll screen to this position */
-  public moveScreenTo() {
-    const { x, y } = this.toScreenPosition()
-    this.bot.moveMap({
-      x: x - window.innerWidth / 3,
-      y: y - window.innerHeight / 3,
+  public moveScreenTo(width: number, height: number) {
+    const canvas = this.bot.map.getCanvas().getBoundingClientRect()
+    const pixelSize = Math.min(
+      (canvas.width * 0.8) / Math.max(1, width),
+      (canvas.height * 0.8) / Math.max(1, height),
+    )
+    this.bot.map.jumpTo({
+      center: [
+        worldToLongitude(this.globalX + width / 2),
+        worldToLatitude(this.globalY + height / 2),
+      ],
+      zoom: zoomForPixelSize(pixelSize),
     })
   }
 
