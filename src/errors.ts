@@ -8,13 +8,6 @@ export class WPlaceBotError extends Error {
   }
 }
 
-export class NoImageError extends WPlaceBotError {
-  public override name = 'NoImageError'
-  public constructor(bot: WPlaceBot) {
-    super('❌ No image is selected', bot)
-  }
-}
-
 export class NoMapError extends WPlaceBotError {
   public override name = 'NoMapError'
   public constructor(bot: WPlaceBot) {

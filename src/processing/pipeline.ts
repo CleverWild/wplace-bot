@@ -1,10 +1,8 @@
 import {
   type ColorMetric,
   COLORS,
-  COLORS_RGB,
   COLORS_RGB_TRIPLES,
   metricFunction,
-  rgbToLab,
 } from '../colors'
 import { type PixelColorStat, UnownedColorStrategy } from '../image/model'
 import {
@@ -27,13 +25,10 @@ export function calculatePixels(
 ): WorkerPixelsResponse {
   const {
     id,
-    data,
-    nativeWidth,
-    nativeHeight,
+    pixels: realPixels,
     width,
     height,
     unavailableColors,
-    brightness,
     colorMetric,
     colors,
     disabledColors,
@@ -47,114 +42,50 @@ export function calculatePixels(
     globalY,
     drawTransparentPixels,
   } = request
-  let lastProgress = 0
-
-  // Scale
-  let scaled
-  if (nativeWidth === width && nativeHeight === height) scaled = data
-  else {
-    scaled = new Uint8ClampedArray(width * height * 4)
-    const xRatio = nativeWidth / width
-    const yRatio = nativeHeight / height
-    for (let y = 0; y < height; y++) {
-      const sy = Math.min(nativeHeight - 1, Math.floor(y * yRatio))
-      for (let x = 0; x < width; x++) {
-        const sx = Math.min(nativeWidth - 1, Math.floor(x * xRatio))
-        const si = (sy * nativeWidth + sx) * 4
-        const di = (y * width + x) * 4
-        scaled[di] = data[si]!
-        scaled[di + 1] = data[si + 1]!
-        scaled[di + 2] = data[si + 2]!
-        scaled[di + 3] = data[si + 3]!
-      }
-      const progress = ((y / height) * 5) | 0
-      if (progress !== lastProgress) {
-        lastProgress = progress
-        onProgress?.(0.1 + progress / 100)
-      }
-    }
-  }
+  validatePixelsRequest(request)
   const SIZE = width * height
-  const metricFn = metricFunction(colorMetric)
-  const isRgbMetric = colorMetric === 'compuphase'
-  const palette = isRgbMetric ? COLORS_RGB_TRIPLES : COLORS
-  const pixels = new Uint8Array(SIZE)
+  const pixels = new Uint8Array(realPixels)
   const isSubstitute = unownedColorStrategy === UnownedColorStrategy.SUBSTITUTE
-  /** Colors before substitution, they key `colorStat` */
-  const realPixels = isSubstitute ? new Uint8Array(SIZE) : pixels
+  const metricFn = metricFunction(colorMetric)
+  const palette = colorMetric === 'compuphase' ? COLORS_RGB_TRIPLES : COLORS
+  const replacements = new Map<number, number>()
   const colorStat = new Map<number, PixelColorStat>()
-  const colorCache = new Map<number, [number, number]>()
-  for (let index = 1; index < 64; index++)
-    if (!unavailableColors.has(index))
-      colorCache.set(COLORS_RGB[index]!, [index, index])
-
-  let i = 0
-  let pi = 0
-  lastProgress = 0
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const progress = ((pi / SIZE) * 75) | 0
-      if (progress !== lastProgress) {
-        lastProgress = progress
-        onProgress?.(0.15 + progress / 100)
-      }
-      const r = scaled[i]!
-      const g = scaled[i + 1]!
-      const b = scaled[i + 2]!
-      const a = scaled[i + 3]!
-      const key = (r << 16) | (g << 8) | b
-      let min!: number
-      let minReal!: number
-      // Transparent pixel
-      if (a < 100) min = minReal = 0
-      else if (colorCache.has(key)) [min, minReal] = colorCache.get(key)!
+  let lastProgress = 0
+  for (let index = 0; index < SIZE; index++) {
+    const progress = ((index / SIZE) * 75) | 0
+    if (progress !== lastProgress) {
+      lastProgress = progress
+      onProgress?.(0.15 + progress / 100)
+    }
+    const realColor = realPixels[index]!
+    let color = realColor
+    if (isSubstitute && realColor !== 0 && unavailableColors.has(realColor)) {
+      const cached = replacements.get(realColor)
+      if (cached !== undefined) color = cached
       else {
-        // Find closest color. Converted once per pixel, not once per candidate
-        const source: [number, number, number] = isRgbMetric
-          ? [r, g, b]
-          : rgbToLab(r, g, b)
         let minDelta = Infinity
-        let minDeltaReal = Infinity
-        for (let colorIndex = 1; colorIndex < 64; colorIndex++) {
-          const delta = metricFn(source, palette[colorIndex]!, brightness)
-          if (!unavailableColors.has(colorIndex) && delta < minDelta) {
+        for (let candidate = 1; candidate < 64; candidate++) {
+          if (unavailableColors.has(candidate)) continue
+          const delta = metricFn(palette[realColor]!, palette[candidate]!, 0)
+          if (delta < minDelta) {
             minDelta = delta
-            min = colorIndex
-          }
-          if (delta < minDeltaReal) {
-            minDeltaReal = delta
-            minReal = colorIndex
+            color = candidate
           }
         }
-        colorCache.set(key, [min, minReal])
+        if (minDelta === Infinity)
+          throw new Error('No available replacement color')
+        replacements.set(realColor, color)
       }
-      pixels[pi] = isSubstitute ? min : minReal
-      if (isSubstitute) realPixels[pi] = minReal
-      const stat = colorStat.get(minReal)
-      if (stat) stat.amount++
-      else
-        colorStat.set(minReal, {
-          color: min,
-          amount: 1,
-          left: 0,
-          realColor: minReal,
-        })
-      i += 4
-      pi++
+      pixels[index] = color
     }
+    const stat = colorStat.get(realColor)
+    if (stat) stat.amount++
+    else colorStat.set(realColor, { color, amount: 1, left: 0, realColor })
   }
 
-  // === Tasks ===
-
-  // Colors
-  const skipColors = new Set<number>()
   const colorsOrderMap = new Map<number, number>()
-  for (let index = 0; index < colors.length; index++) {
-    const drawColor = colors[index]!
-    if (disabledColors.has(drawColor) || unavailableColors.has(drawColor))
-      skipColors.add(drawColor)
-    colorsOrderMap.set(drawColor, index)
-  }
+  for (let index = 0; index < colors.length; index++)
+    colorsOrderMap.set(colors[index]!, index)
   const positions = strategyPosition(strategy, height, width)
   const tasks: { gx: number; gy: number; color: number; realColor: number }[] =
     []
@@ -188,7 +119,11 @@ export function calculatePixels(
     // Counted even for skipped colors, they are not painted, not done
     const realColor = realPixels[dy * width + dx]!
     colorStat.get(realColor)!.left++
-    if (skipColors.has(color) || (!drawTransparentPixels && color === 0))
+    if (
+      disabledColors.has(realColor) ||
+      unavailableColors.has(color) ||
+      (!drawTransparentPixels && color === 0)
+    )
       continue
 
     tasks.push({
@@ -234,7 +169,8 @@ export function calculatePixels(
   if (drawColorsInOrder)
     ordered.sort(
       (a, b) =>
-        (colorsOrderMap.get(a.color) ?? 0) - (colorsOrderMap.get(b.color) ?? 0),
+        (colorsOrderMap.get(a.realColor) ?? 0) -
+        (colorsOrderMap.get(b.realColor) ?? 0),
     )
   if (outlineFirst) {
     // Applied over what the color sort left, so an outline stays one line
@@ -251,7 +187,6 @@ export function calculatePixels(
     ordered = outlined
   }
 
-  // Sending
   const taskPositions = new Uint32Array(ordered.length * 2)
   for (let index = 0; index < ordered.length; index++) {
     const task = ordered[index]!
@@ -265,6 +200,24 @@ export function calculatePixels(
     colorStat,
     pixels,
   }
+}
+
+export function validatePixelsRequest(
+  request: Pick<WorkerPixelsRequest, 'pixels' | 'width' | 'height'>,
+) {
+  const { pixels, width, height } = request
+  if (
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    !(pixels instanceof Uint8Array) ||
+    pixels.length !== width * height
+  )
+    throw new Error('Template pixel dimensions do not match its indexed image')
+  for (let index = 0; index < pixels.length; index++)
+    if (pixels[index]! >= 64)
+      throw new Error('Template contains an invalid palette index')
 }
 
 /**

@@ -1,14 +1,11 @@
 import { type BotStrategy, type DropletStrategy } from '../drawing/policy'
-import { type ImageSettings } from '../image/model'
+import { type DrawingSettings } from '../image/model'
 
-export const SAVE_VERSION = 10
+export const SAVE_VERSION = 11
 
-export type SavedImage = Omit<ImageSettings, 'disabledColors'> & {
-  url: string
-  /** Top-left corner in world pixels */
-  position: readonly [number, number]
+export type SavedImage = Omit<DrawingSettings, 'disabledColors'> & {
+  wplaceId: string
   disabledColors: number[]
-  version: number
 }
 
 export type SavedBot = {
@@ -22,10 +19,6 @@ export type SavedBot = {
   tileCountries: [number, number][]
 }
 
-/**
- * A migrated image. Saves older than the current fields leave them out, and
- * image creation fills them from defaults and the source image size.
- */
-export type LoadedImage = Pick<SavedImage, 'url'> & Partial<SavedImage>
+export type LoadedImage = SavedImage
 
-export type LoadedBot = Omit<SavedBot, 'images'> & { images: LoadedImage[] }
+export type LoadedBot = SavedBot & { archivedImageCount?: number }

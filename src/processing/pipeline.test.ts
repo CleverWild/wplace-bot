@@ -5,9 +5,9 @@ import { calculatePixels } from './pipeline'
 import { type WorkerPixelsRequest } from './protocol'
 import { packTile, toTile, toTilePosition } from './tiles'
 
-/** Captured from the worker before extraction, see fixtures/pipeline.json */
+/** Task ordering captured from the worker before extraction. */
 for (const fixture of fixtures) {
-  test('preserves original worker results: ' + fixture.name, () => {
+  test('preserves indexed task ordering: ' + fixture.name, () => {
     const maps = new Map<number, Uint8Array>()
     for (const tileX of [0, 1])
       for (const tileY of [0, 1])
@@ -20,7 +20,7 @@ for (const fixture of fixtures) {
     }
     const request = {
       ...fixture.input,
-      data: new Uint8ClampedArray(fixture.input.data),
+      pixels: new Uint8Array(fixture.input.pixels),
       unavailableColors: new Set(fixture.input.unavailableColors),
       disabledColors: new Set(fixture.input.disabledColors),
     } as WorkerPixelsRequest

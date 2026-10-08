@@ -20,15 +20,12 @@ A fork of [SoundOfTheSky/wplace-bot](https://github.com/SoundOfTheSky/wplace-bot
 
 ## How to use
 
-1. Add an image or exported `.wbot` file.
-2. Drag the image and its edges to position and resize it.
-3. Change the image order.
-4. Configure the colors bar and enable **Draw color in order** when needed.
-5. Configure substitution colors: the upper button buys a color and the lower button disables it.
-6. Export an image or a `.wbot` file to preserve its settings.
-7. Lock an image to prevent accidental edits and allow click-through.
-8. Delete an image when it is no longer needed.
-9. Click **Draw** to queue the current work. **Auto-Draw** submits each queued pixel as charges become available; use it only when that automatic submission is intended.
+1. Create and place a template in wplace's own template manager (image, name, position, size and editing live there). It appears in the bot's list.
+2. Change the drawing order of templates with the arrows.
+3. Open a template's settings (⚙️) to configure the colors bar and enable **Draw color in order** when needed.
+4. Configure substitution colors: the upper button buys a color and the lower button disables it.
+5. Switch a template off in the bot to skip it without touching it on wplace.
+6. Click **Draw** to queue the current work. **Auto-Draw** submits each queued pixel as charges become available; use it only when that automatic submission is intended.
 
 See the [dated map-positioning research](docs/map-positioning-research.md) and the [manual smoke checklist](docs/manual-smoke-check.md) for maintainer details.
 

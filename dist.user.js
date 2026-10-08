@@ -72,89 +72,37 @@ var SESSION_ID = Math.floor(Math.random() * 4503599627370496).toString(16).padSt
 function wait(time) {
   return new Promise((r) => setTimeout(r, time));
 }
-class SimpleEventSource {
-  handlers = new Map;
-  send(name, data) {
-    return this.handlers.get(name)?.map((handler) => handler(data)) ?? [];
-  }
-  on(name, handler) {
-    let handlers = this.handlers.get(name);
-    if (!handlers) {
-      handlers = [];
-      this.handlers.set(name, handlers);
-    }
-    handlers.push(handler);
-    return () => {
-      removeFromArray(handlers, handler);
-      if (handlers.length === 0)
-        this.handlers.delete(name);
-    };
-  }
-  off(name, handler) {
-    const handlers = this.handlers.get(name);
-    if (!handlers)
-      return;
-    removeFromArray(handlers, handler);
-    if (handlers.length === 0)
-      this.handlers.delete(name);
-  }
-  get source() {
-    return {
-      on: this.on.bind(this),
-      off: this.off.bind(this)
-    };
-  }
-}
-function promisifyEventSource(target, resolveEvents, rejectEvents = ["error"], subName = "addEventListener") {
-  return new Promise((resolve, reject) => {
-    for (let index = 0;index < resolveEvents.length; index++)
-      target[subName]?.(resolveEvents[index], resolve);
-    for (let index = 0;index < rejectEvents.length; index++)
-      target[subName]?.(rejectEvents[index], reject);
-  });
-}
 // node_modules/@softsky/utils/dist/signals.js
 var effectsMap = new WeakMap;
-// node_modules/@softsky/utils/dist/time.js
-class SpeedCalculator {
-  size;
-  historyTime;
-  sum = 0;
-  history = [];
-  statsCached;
-  startTime = Date.now();
-  constructor(size, historyTime = 15000) {
-    this.size = size;
-    this.historyTime = historyTime;
-  }
-  push(chunk) {
-    if (chunk < 0)
-      throw new Error("Negative chunk size");
-    const { time, historyTime } = this.getTime();
-    this.history.push({ time, chunk });
-    if (this.history[0] && this.history[0].time + historyTime < time)
-      this.history.shift();
-    this.sum += chunk;
-    delete this.statsCached;
-  }
-  get stats() {
-    if (!this.statsCached) {
-      const speed = this.history.reduce((sum, entry) => sum + entry.chunk, 0) / this.getTime().historyTime * 1000;
-      this.statsCached = this.size === undefined ? { speed } : {
-        speed,
-        percent: this.sum / this.size,
-        eta: ~~((this.size - this.sum) / speed) * 1000
-      };
-    }
-    return this.statsCached;
-  }
-  getTime() {
-    const time = Date.now();
-    const timeSinceStart = time - this.startTime;
-    const historyTime = Math.min(timeSinceStart, this.historyTime);
-    return { time, historyTime };
+// src/drawing/policy.ts
+var BotStrategy;
+((BotStrategy) => {
+  BotStrategy["ALL"] = "ALL";
+  BotStrategy["PERCENTAGE"] = "PERCENTAGE";
+  BotStrategy["SEQUENTIAL"] = "SEQUENTIAL";
+})(BotStrategy ||= {});
+var DropletStrategy;
+((DropletStrategy) => {
+  DropletStrategy["COLORS"] = "COLORS";
+  DropletStrategy["COLORS_FIRST"] = "COLORS_FIRST";
+})(DropletStrategy ||= {});
+
+// src/errors.ts
+class WPlaceBotError extends Error {
+  name = "WPlaceBotError";
+  constructor(message, bot) {
+    super(message);
+    bot.widget.status = message;
   }
 }
+
+class NoMapError extends WPlaceBotError {
+  name = "NoMapError";
+  constructor(bot) {
+    super("❌ Couldn't find wplace's map. The site has probably changed.", bot);
+  }
+}
+
 // src/coordinates.ts
 var WORLD_TILE_SIZE = 1000;
 var WORLD_TILES = 2048;
@@ -260,9 +208,6 @@ function containsClass(el, className) {
 }
 function querySelector(el, selector) {
   return el.querySelector(obfuscateLocalCSS(selector));
-}
-function querySelectorAll(el, selector) {
-  return el.querySelectorAll(obfuscateLocalCSS(selector));
 }
 
 // src/base.ts
@@ -378,79 +323,47 @@ function colorToCSS(colorId) {
 }
 
 // src/image/controller.ts
-var RANK = {
-  none: 0,
-  render: 1,
-  recompute: 2
-};
 var SETTING_EFFECTS = {
-  width: "recompute",
-  height: "recompute",
-  brightness: "recompute",
-  colorMetric: "recompute",
   strategy: "recompute",
-  opacity: "render",
   drawTransparentPixels: "recompute",
   drawColorsInOrder: "recompute",
   colors: "recompute",
   disabledColors: "recompute",
-  lock: "render",
   disabled: "recompute",
-  name: "render",
   unownedColorStrategy: "recompute",
-  wplaceId: "render",
-  siteDisabled: "recompute",
   regionOrder: "recompute",
   fillDirection: "recompute",
   outlineFirst: "recompute"
 };
-var PLACEMENT_EFFECTS = {
-  globalX: "recompute",
-  globalY: "recompute"
-};
-var EFFECTS = {
-  ...SETTING_EFFECTS,
-  ...PLACEMENT_EFFECTS
-};
 function effectOf(keys) {
-  let effect = "none";
-  for (const key of keys) {
-    const next = EFFECTS[key];
-    if (next && RANK[next] > RANK[effect])
-      effect = next;
-  }
-  return effect;
+  for (const key of keys)
+    if (Object.hasOwn(SETTING_EFFECTS, key))
+      return "recompute";
+  return "none";
 }
 
 class ImageController {
   settings;
-  placement;
   host;
   revision = 0;
   disposed = false;
   latest = Promise.resolve();
-  constructor(settings, placement, host) {
+  constructor(settings, host) {
     this.settings = settings;
-    this.placement = placement;
     this.host = host;
   }
   async update(changes, { save = true } = {}) {
     const effect = effectOf(this.assign(changes));
     if (effect === "none")
       return effect;
-    if (effect === "recompute")
-      await this.recompute();
-    else
-      this.host.render();
+    await this.recompute();
     if (save)
       await this.host.save();
     return effect;
   }
-  preview(changes) {
-    if (this.assign(changes).length === 0)
-      return Promise.resolve();
-    this.host.render();
-    return this.host.save();
+  invalidate() {
+    this.revision++;
+    this.latest = Promise.resolve();
   }
   recompute(progress) {
     const run = this.run(++this.revision, progress);
@@ -464,7 +377,9 @@ class ImageController {
   assign(changes) {
     const changed = [];
     for (const [key, value] of Object.entries(changes)) {
-      const target = key in PLACEMENT_EFFECTS ? this.placement : this.settings;
+      if (!Object.hasOwn(SETTING_EFFECTS, key))
+        continue;
+      const target = this.settings;
       if (Object.is(target[key], value))
         continue;
       target[key] = value;
@@ -492,129 +407,122 @@ class ImageController {
 }
 
 // src/ordering.ts
+var ImageStrategy;
+((ImageStrategy) => {
+  ImageStrategy["RANDOM"] = "RANDOM";
+  ImageStrategy["CONTRAST"] = "CONTRAST";
+  ImageStrategy["DOWN"] = "DOWN";
+  ImageStrategy["UP"] = "UP";
+  ImageStrategy["LEFT"] = "LEFT";
+  ImageStrategy["RIGHT"] = "RIGHT";
+  ImageStrategy["SPIRAL_FROM_CENTER"] = "SPIRAL_FROM_CENTER";
+  ImageStrategy["SPIRAL_TO_CENTER"] = "SPIRAL_TO_CENTER";
+})(ImageStrategy ||= {});
+var RegionOrder;
+((RegionOrder) => {
+  RegionOrder["OFF"] = "OFF";
+  RegionOrder["IN_ORDER"] = "IN_ORDER";
+  RegionOrder["LARGEST"] = "LARGEST";
+  RegionOrder["SMALLEST"] = "SMALLEST";
+})(RegionOrder ||= {});
+var FillDirection;
+((FillDirection) => {
+  FillDirection["SEED_OUT"] = "SEED_OUT";
+  FillDirection["EDGE_IN"] = "EDGE_IN";
+})(FillDirection ||= {});
 function sortColorsByAmount(colors, amounts, ascending) {
   return [...colors].sort((a, b) => ascending ? (amounts.get(a) ?? 0) - (amounts.get(b) ?? 0) : (amounts.get(b) ?? 0) - (amounts.get(a) ?? 0));
 }
 
 // src/image/model.ts
+var UnownedColorStrategy;
+((UnownedColorStrategy) => {
+  UnownedColorStrategy["BUY"] = "BUY";
+  UnownedColorStrategy["SKIP"] = "SKIP";
+  UnownedColorStrategy["SUBSTITUTE"] = "SUBSTITUTE";
+})(UnownedColorStrategy ||= {});
 function createImageSettings(overrides = {}) {
   const settings = {
-    width: 1,
-    height: undefined,
-    wplaceId: undefined,
-    brightness: 0,
-    colorMetric: "lab",
     strategy: "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */,
-    opacity: 50,
     drawTransparentPixels: false,
     drawColorsInOrder: true,
     colors: [],
     disabledColors: new Set,
-    lock: false,
     disabled: false,
-    name: "",
     unownedColorStrategy: "BUY" /* BUY */,
-    siteDisabled: false,
     regionOrder: "OFF" /* OFF */,
     fillDirection: "SEED_OUT" /* SEED_OUT */,
     outlineFirst: false
   };
-  for (const [key, value] of Object.entries(overrides))
-    if (value !== undefined && key in settings)
+  for (const key of Object.keys(settings)) {
+    const value = overrides[key];
+    if (value !== undefined)
       Object.assign(settings, { [key]: value });
+  }
   settings.colors = [...settings.colors];
   settings.disabledColors = new Set(settings.disabledColors);
   return settings;
 }
 
 // src/image.html
-var image_default = `<div class="topbar">
-  <input type="text" class="name">
-  <button class="open-settings" title="Open settings">✏️</button>
-  <button class="export" title="Export image">📤</button>
-  <button class="lock" title="Lock/unlock image movement">🔓</button>
-  <button class="delete" title="Remove image from bot">❌</button>
-</div>
-<div class="wrapper">
-  <canvas></canvas>
-  <div class="resize n"></div>
-  <div class="resize e"></div>
-  <div class="resize s"></div>
-  <div class="resize w"></div>
-</div>
-<dialog class="form">
-    <div class="progress">
-      <div></div>
-      <span></span>
-    </div>
-    <label class="unowned-color-strategy" title="What to do with unonwned colors">
-      Unowned Colors:&nbsp;<select>
-        <option value="BUY" selected>Buy</option>
-        <option value="SKIP">Skip</option>
-        <option value="SUBSTITUTE">Substitute</option>
-      </select>
-    </label>
-    <label>Opacity:&nbsp;<input class="opacity" type="range" min="0" max="100"/></label>
-    <label>Brightness:&nbsp;<input class="brightness" type="number" step="0.1"/></label>
-    <label title="How colors are matched. Match this to your wplace template">
-      Color metric:&nbsp;<select class="color-metric">
-        <option value="lab" selected>Lab (wplace default)</option>
-        <option value="ciede2000">CIEDE2000</option>
-        <option value="compuphase">Compuphase</option>
-      </select>
-    </label>
-    <label color="How to draw">
-      Strategy:&nbsp;<select class="strategy">
-        <option value="RANDOM">Random</option>
-        <option value="CONTRAST">Maximum contrast</option>
-        <option value="DOWN">Top to Bottom</option>
-        <option value="UP">Bottom to Top</option>
-        <option value="LEFT">Right to Left</option>
-        <option value="RIGHT">Left to Right</option>
-        <option value="SPIRAL_FROM_CENTER">Spiral out</option>
-        <option value="SPIRAL_TO_CENTER" selected>Spiral in</option>
-      </select>
-    </label>
-    <button class="reset-size">Reset size [<span></span>px]</button>
-    <button class="reset-aspect">Reset aspect ratio</button>
-    <label>
-      <input type="checkbox" class="draw-transparent" />&nbsp;Erase transparent pixels
-    </label>
-    <label>
-      <input type="checkbox" class="draw-colors-in-order" />&nbsp;Draw colors in order
-    </label>
-    <label title="The silhouette, meaning whatever touches transparency or the image edge, before everything it encloses">
-      <input type="checkbox" class="outline-first" />&nbsp;Outline first
-    </label>
-    <label class="region-order" title="Finish one blob of a color before starting the next, and which blob goes first">
-      Fill regions:&nbsp;<select>
-        <option value="OFF" selected>Off</option>
-        <option value="IN_ORDER">In drawing order</option>
-        <option value="LARGEST">Largest first</option>
-        <option value="SMALLEST">Smallest first</option>
-      </select>
-    </label>
-    <label class="nested fill-direction" title="How a single blob is filled in">
-      Fill:&nbsp;<select>
-        <option value="SEED_OUT" selected>From seed outward</option>
-        <option value="EDGE_IN">From edge inward</option>
-      </select>
-    </label>
-    <div class="colors-sort">
-      <button class="sort-colors-desc" title="Order colors by pixel count, most first">↓ Most</button>
-      <button class="sort-colors-asc" title="Order colors by pixel count, fewest first">↑ Fewest</button>
-    </div>
-    <div class="colors"></div>
-  </dialog>
-  <dialog class="export-dialog">
-    <button class="export-wbot">Save .wbot (restorable)</button>
-    <button class="export-wplace">Export .wplace (wplace template)</button>
-    <button class="export-image">Export image (.webp)</button>
-  </dialog>
+var image_default = `<dialog class="form">\r
+    <div class="name"></div>\r
+    <div class="progress">\r
+      <div></div>\r
+      <span></span>\r
+    </div>\r
+    <label class="unowned-color-strategy" title="What to do with unonwned colors">\r
+      Unowned Colors:&nbsp;<select>\r
+        <option value="BUY" selected>Buy</option>\r
+        <option value="SKIP">Skip</option>\r
+        <option value="SUBSTITUTE">Substitute</option>\r
+      </select>\r
+    </label>\r
+    <label color="How to draw">\r
+      Strategy:&nbsp;<select class="strategy">\r
+        <option value="RANDOM">Random</option>\r
+        <option value="CONTRAST">Maximum contrast</option>\r
+        <option value="DOWN">Top to Bottom</option>\r
+        <option value="UP">Bottom to Top</option>\r
+        <option value="LEFT">Right to Left</option>\r
+        <option value="RIGHT">Left to Right</option>\r
+        <option value="SPIRAL_FROM_CENTER">Spiral out</option>\r
+        <option value="SPIRAL_TO_CENTER" selected>Spiral in</option>\r
+      </select>\r
+    </label>\r
+    <label>\r
+      <input type="checkbox" class="draw-transparent" />&nbsp;Erase transparent pixels\r
+    </label>\r
+    <label>\r
+      <input type="checkbox" class="draw-colors-in-order" />&nbsp;Draw colors in order\r
+    </label>\r
+    <label title="The silhouette, meaning whatever touches transparency or the image edge, before everything it encloses">\r
+      <input type="checkbox" class="outline-first" />&nbsp;Outline first\r
+    </label>\r
+    <label class="region-order" title="Finish one blob of a color before starting the next, and which blob goes first">\r
+      Fill regions:&nbsp;<select>\r
+        <option value="OFF" selected>Off</option>\r
+        <option value="IN_ORDER">In drawing order</option>\r
+        <option value="LARGEST">Largest first</option>\r
+        <option value="SMALLEST">Smallest first</option>\r
+      </select>\r
+    </label>\r
+    <label class="nested fill-direction" title="How a single blob is filled in">\r
+      Fill:&nbsp;<select>\r
+        <option value="SEED_OUT" selected>From seed outward</option>\r
+        <option value="EDGE_IN">From edge inward</option>\r
+      </select>\r
+    </label>\r
+    <div class="colors-sort">\r
+      <button class="sort-colors-desc" title="Order colors by pixel count, most first">↓ Most</button>\r
+      <button class="sort-colors-asc" title="Order colors by pixel count, fewest first">↑ Fewest</button>\r
+    </div>\r
+    <div class="colors"></div>\r
+  </dialog>\r
 `;
 
 // src/persistence/schema.ts
-var SAVE_VERSION = 10;
+var SAVE_VERSION = 11;
 
 // src/persistence/migrations.ts
 function isFields(value) {
@@ -626,7 +534,7 @@ function isTileCountry(value) {
 function versionOf(fields) {
   return typeof fields.version === "number" ? fields.version : 0;
 }
-function migrateImage(old) {
+function migrateLegacyImage(old) {
   if (!isFields(old))
     throw new Error("Saved image is not an object");
   let image = old;
@@ -677,13 +585,35 @@ function migrateImage(old) {
       version: 6
     };
   }
-  if (typeof image.url !== "string")
-    throw new Error("Saved image has no source url");
   return image;
+}
+function migrateImage(old, legacy = false) {
+  if (!isFields(old))
+    throw new Error("Saved image is not an object");
+  const image = legacy ? migrateLegacyImage(old) : old;
+  if (typeof image.wplaceId !== "string" || image.wplaceId.length === 0)
+    throw new Error("Saved template has no Wplace ID");
+  const defaults = createImageSettings();
+  const colorList = (value) => Array.isArray(value) ? value.filter((color) => typeof color === "number" && Number.isInteger(color) && color >= 0 && color < 64) : [];
+  return {
+    wplaceId: image.wplaceId,
+    strategy: Object.values(ImageStrategy).includes(image.strategy) ? image.strategy : defaults.strategy,
+    drawTransparentPixels: typeof image.drawTransparentPixels === "boolean" ? image.drawTransparentPixels : defaults.drawTransparentPixels,
+    drawColorsInOrder: typeof image.drawColorsInOrder === "boolean" ? image.drawColorsInOrder : defaults.drawColorsInOrder,
+    colors: colorList(image.colors),
+    disabledColors: colorList(image.disabledColors),
+    disabled: typeof image.disabled === "boolean" ? image.disabled : defaults.disabled,
+    unownedColorStrategy: Object.values(UnownedColorStrategy).includes(image.unownedColorStrategy) ? image.unownedColorStrategy : defaults.unownedColorStrategy,
+    regionOrder: Object.values(RegionOrder).includes(image.regionOrder) ? image.regionOrder : defaults.regionOrder,
+    fillDirection: Object.values(FillDirection).includes(image.fillDirection) ? image.fillDirection : defaults.fillDirection,
+    outlineFirst: typeof image.outlineFirst === "boolean" ? image.outlineFirst : defaults.outlineFirst
+  };
 }
 function migrate(old) {
   if (!isFields(old))
     throw new Error("Save is not an object");
+  if (versionOf(old) > SAVE_VERSION)
+    throw new Error("Save version is newer than this bot");
   let save = old;
   if (versionOf(save) < 3)
     save = {
@@ -706,10 +636,28 @@ function migrate(old) {
     save = { ...save, tileCountries: [], version: 10 };
   if (!Array.isArray(save.images))
     throw new Error("Save has no image list");
+  const images = [];
+  const seen = new Set;
+  let archivedImageCount = 0;
+  for (const image of save.images) {
+    if (versionOf(old) < 11 && (!isFields(image) || typeof image.wplaceId !== "string" || !image.wplaceId)) {
+      archivedImageCount++;
+      continue;
+    }
+    const migrated = migrateImage(image, versionOf(old) < 11);
+    if (!seen.has(migrated.wplaceId)) {
+      seen.add(migrated.wplaceId);
+      images.push(migrated);
+    }
+  }
   return {
-    ...save,
     version: SAVE_VERSION,
-    images: save.images.map(migrateImage),
+    images,
+    strategy: Object.values(BotStrategy).includes(save.strategy) ? save.strategy : "ALL" /* ALL */,
+    dropletStrategy: Object.values(DropletStrategy).includes(save.dropletStrategy) ? save.dropletStrategy : "COLORS" /* COLORS */,
+    title: typeof save.title === "string" ? save.title : "WPlace-bot",
+    widgetOpen: typeof save.widgetOpen === "boolean" ? save.widgetOpen : true,
+    ...archivedImageCount > 0 ? { archivedImageCount } : {},
     tileCountries: Array.isArray(save.tileCountries) ? save.tileCountries.filter(isTileCountry) : []
   };
 }
@@ -781,6 +729,7 @@ var DB_NAME = "wbot";
 var STORE_NAME = "saves";
 var DB_VERSION = 1;
 var SAVE_KEY = "wbot";
+var PRE_SITE_TEMPLATES_KEY = "wbot-pre-site-templates-v11";
 var database;
 function openDatabase() {
   database ??= new Promise((resolve, reject) => {
@@ -834,6 +783,33 @@ async function idbSet(key, value) {
     };
   });
 }
+async function archiveAndMigrateSave(original, migrated) {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, "readwrite");
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.get(PRE_SITE_TEMPLATES_KEY);
+    request.onsuccess = () => {
+      try {
+        if (request.result === undefined)
+          store.add(original, PRE_SITE_TEMPLATES_KEY);
+        store.put(migrated, SAVE_KEY);
+      } catch (error) {
+        transaction.abort();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
+    transaction.oncomplete = () => {
+      resolve();
+    };
+    transaction.onerror = () => {
+      reject(transaction.error ?? new Error("Save migration failed"));
+    };
+    transaction.onabort = () => {
+      reject(transaction.error ?? new Error("Save migration aborted"));
+    };
+  });
+}
 async function deleteAllData() {
   const db = await database?.catch(() => {
     return;
@@ -856,38 +832,48 @@ async function deleteAllData() {
 
 // src/save.ts
 var queue = new SaveQueue((data) => idbSet(SAVE_KEY, data));
+var loadFailure;
 async function loadSave() {
   try {
-    await migrateSaveFromLS();
-    const raw = await idbGet(SAVE_KEY);
-    if (typeof raw !== "object" || raw === null)
+    let raw = await idbGet(SAVE_KEY);
+    let legacyKey;
+    if (raw === undefined) {
+      for (let index = 0;index < localStorage.length; index++) {
+        const key = localStorage.key(index);
+        if (key?.endsWith(SAVE_KEY)) {
+          const json = localStorage.getItem(key);
+          if (json !== null) {
+            raw = JSON.parse(json);
+            legacyKey = key;
+            break;
+          }
+        }
+      }
+    }
+    if (raw === undefined) {
+      loadFailure = undefined;
       return;
-    return migrate(raw);
-  } catch {
-    return;
+    }
+    const loaded = migrate(raw);
+    const version = raw.version;
+    if (typeof version !== "number" || version < SAVE_VERSION) {
+      const { archivedImageCount: _, ...persisted } = loaded;
+      await archiveAndMigrateSave(raw, persisted);
+    } else if (legacyKey)
+      await idbSet(SAVE_KEY, loaded);
+    if (legacyKey)
+      localStorage.removeItem(legacyKey);
+    loadFailure = undefined;
+    return loaded;
+  } catch (error) {
+    loadFailure = error instanceof Error ? error : new Error(String(error));
+    throw loadFailure;
   }
 }
 function save(bot, immediate = false) {
+  if (loadFailure)
+    return Promise.reject(loadFailure);
   return queue.save(() => bot.toJSON(), immediate);
-}
-async function migrateSaveFromLS() {
-  let legacyKey = "";
-  for (let index = 0;index < localStorage.length; index++) {
-    legacyKey = localStorage.key(index);
-    if (legacyKey.endsWith(SAVE_KEY))
-      break;
-  }
-  if (legacyKey.endsWith(SAVE_KEY)) {
-    const json = localStorage.getItem(legacyKey);
-    if (json) {
-      try {
-        const parsed = JSON.parse(json);
-        if (typeof parsed === "object")
-          await idbSet(SAVE_KEY, parsed);
-      } catch {}
-    }
-    localStorage.removeItem(legacyKey);
-  }
 }
 
 // src/utils.ts
@@ -1146,9 +1132,9 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
             result[index + 1] = y;
             index += 2;
           }
-        for (let index2 = SIZE - 1;index2 >= 0; index2--) {
-          const randIndex = Math.floor(Math.random() * (index2 + 1)) * 2;
-          const realIndex = index2 * 2;
+        for (let index = SIZE - 1;index >= 0; index--) {
+          const randIndex = Math.floor(Math.random() * (index + 1)) * 2;
+          const realIndex = index * 2;
           const temporaryX = result[realIndex];
           const temporaryY = result[realIndex + 1];
           result[realIndex] = result[randIndex];
@@ -1514,13 +1500,10 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
   function calculatePixels(request, maps, onProgress) {
     const {
       id,
-      data,
-      nativeWidth,
-      nativeHeight,
+      pixels: realPixels,
       width,
       height,
       unavailableColors,
-      brightness,
       colorMetric,
       colors,
       disabledColors,
@@ -1534,107 +1517,53 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       globalY,
       drawTransparentPixels
     } = request;
-    let lastProgress = 0;
-    let scaled;
-    if (nativeWidth === width && nativeHeight === height)
-      scaled = data;
-    else {
-      scaled = new Uint8ClampedArray(width * height * 4);
-      const xRatio = nativeWidth / width;
-      const yRatio = nativeHeight / height;
-      for (let y = 0;y < height; y++) {
-        const sy = Math.min(nativeHeight - 1, Math.floor(y * yRatio));
-        for (let x = 0;x < width; x++) {
-          const sx = Math.min(nativeWidth - 1, Math.floor(x * xRatio));
-          const si = (sy * nativeWidth + sx) * 4;
-          const di = (y * width + x) * 4;
-          scaled[di] = data[si];
-          scaled[di + 1] = data[si + 1];
-          scaled[di + 2] = data[si + 2];
-          scaled[di + 3] = data[si + 3];
-        }
-        const progress = y / height * 5 | 0;
-        if (progress !== lastProgress) {
-          lastProgress = progress;
-          onProgress?.(0.1 + progress / 100);
-        }
-      }
-    }
+    validatePixelsRequest(request);
     const SIZE = width * height;
-    const metricFn = metricFunction(colorMetric);
-    const isRgbMetric = colorMetric === "compuphase";
-    const palette = isRgbMetric ? COLORS_RGB_TRIPLES : COLORS;
-    const pixels = new Uint8Array(SIZE);
+    const pixels = new Uint8Array(realPixels);
     const isSubstitute = unownedColorStrategy === "SUBSTITUTE" /* SUBSTITUTE */;
-    const realPixels = isSubstitute ? new Uint8Array(SIZE) : pixels;
+    const metricFn = metricFunction(colorMetric);
+    const palette = colorMetric === "compuphase" ? COLORS_RGB_TRIPLES : COLORS;
+    const replacements = new Map;
     const colorStat = new Map;
-    const colorCache = new Map;
-    for (let index = 1;index < 64; index++)
-      if (!unavailableColors.has(index))
-        colorCache.set(COLORS_RGB[index], [index, index]);
-    let i = 0;
-    let pi = 0;
-    lastProgress = 0;
-    for (let y = 0;y < height; y++) {
-      for (let x = 0;x < width; x++) {
-        const progress = pi / SIZE * 75 | 0;
-        if (progress !== lastProgress) {
-          lastProgress = progress;
-          onProgress?.(0.15 + progress / 100);
-        }
-        const r = scaled[i];
-        const g = scaled[i + 1];
-        const b = scaled[i + 2];
-        const a = scaled[i + 3];
-        const key = r << 16 | g << 8 | b;
-        let min;
-        let minReal;
-        if (a < 100)
-          min = minReal = 0;
-        else if (colorCache.has(key))
-          [min, minReal] = colorCache.get(key);
+    let lastProgress = 0;
+    for (let index = 0;index < SIZE; index++) {
+      const progress = index / SIZE * 75 | 0;
+      if (progress !== lastProgress) {
+        lastProgress = progress;
+        onProgress?.(0.15 + progress / 100);
+      }
+      const realColor = realPixels[index];
+      let color = realColor;
+      if (isSubstitute && realColor !== 0 && unavailableColors.has(realColor)) {
+        const cached = replacements.get(realColor);
+        if (cached !== undefined)
+          color = cached;
         else {
-          const source = isRgbMetric ? [r, g, b] : rgbToLab(r, g, b);
           let minDelta = Infinity;
-          let minDeltaReal = Infinity;
-          for (let colorIndex = 1;colorIndex < 64; colorIndex++) {
-            const delta = metricFn(source, palette[colorIndex], brightness);
-            if (!unavailableColors.has(colorIndex) && delta < minDelta) {
+          for (let candidate = 1;candidate < 64; candidate++) {
+            if (unavailableColors.has(candidate))
+              continue;
+            const delta = metricFn(palette[realColor], palette[candidate], 0);
+            if (delta < minDelta) {
               minDelta = delta;
-              min = colorIndex;
-            }
-            if (delta < minDeltaReal) {
-              minDeltaReal = delta;
-              minReal = colorIndex;
+              color = candidate;
             }
           }
-          colorCache.set(key, [min, minReal]);
+          if (minDelta === Infinity)
+            throw new Error("No available replacement color");
+          replacements.set(realColor, color);
         }
-        pixels[pi] = isSubstitute ? min : minReal;
-        if (isSubstitute)
-          realPixels[pi] = minReal;
-        const stat = colorStat.get(minReal);
-        if (stat)
-          stat.amount++;
-        else
-          colorStat.set(minReal, {
-            color: min,
-            amount: 1,
-            left: 0,
-            realColor: minReal
-          });
-        i += 4;
-        pi++;
+        pixels[index] = color;
       }
+      const stat = colorStat.get(realColor);
+      if (stat)
+        stat.amount++;
+      else
+        colorStat.set(realColor, { color, amount: 1, left: 0, realColor });
     }
-    const skipColors = new Set;
     const colorsOrderMap = new Map;
-    for (let index = 0;index < colors.length; index++) {
-      const drawColor = colors[index];
-      if (disabledColors.has(drawColor) || unavailableColors.has(drawColor))
-        skipColors.add(drawColor);
-      colorsOrderMap.set(drawColor, index);
-    }
+    for (let index = 0;index < colors.length; index++)
+      colorsOrderMap.set(colors[index], index);
     const positions = strategyPosition(strategy, height, width);
     const tasks = [];
     const contrast = strategy === "CONTRAST" /* CONTRAST */;
@@ -1663,7 +1592,7 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
         continue;
       const realColor = realPixels[dy * width + dx];
       colorStat.get(realColor).left++;
-      if (skipColors.has(color) || !drawTransparentPixels && color === 0)
+      if (disabledColors.has(realColor) || unavailableColors.has(color) || !drawTransparentPixels && color === 0)
         continue;
       tasks.push({
         gx,
@@ -1689,7 +1618,7 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
         ordered[index] = tasks[taskOf[order[index]]];
     }
     if (drawColorsInOrder)
-      ordered.sort((a, b) => (colorsOrderMap.get(a.color) ?? 0) - (colorsOrderMap.get(b.color) ?? 0));
+      ordered.sort((a, b) => (colorsOrderMap.get(a.realColor) ?? 0) - (colorsOrderMap.get(b.realColor) ?? 0));
     if (outlineFirst) {
       const current = new Uint32Array(ordered.length);
       for (let index = 0;index < ordered.length; index++) {
@@ -1715,6 +1644,14 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       colorStat,
       pixels
     };
+  }
+  function validatePixelsRequest(request) {
+    const { pixels, width, height } = request;
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0 || !(pixels instanceof Uint8Array) || pixels.length !== width * height)
+      throw new Error("Template pixel dimensions do not match its indexed image");
+    for (let index = 0;index < pixels.length; index++)
+      if (pixels[index] >= 64)
+        throw new Error("Template contains an invalid palette index");
   }
   function contrastDistances(colorMetric) {
     const metricFn = metricFunction(colorMetric);
@@ -1802,6 +1739,7 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       send({ id: request.id, progress: p });
     };
     try {
+      validatePixelsRequest(request);
       const maps = await tiles.load(request.globalX, request.globalY, request.width, request.height, progress);
       const result = calculatePixels(request, maps, progress);
       send(result, [result.taskPositions.buffer, result.pixels.buffer]);
@@ -1941,257 +1879,31 @@ class WorldPosition {
   }
 }
 
-// src/wplace-file.ts
-function placement(template) {
-  const bounds = template.bounds;
-  if (!bounds || [bounds.north, bounds.south, bounds.west, bounds.east].some((x) => typeof x !== "number" || !Number.isFinite(x)))
-    throw new Error("Template has no usable bounds");
-  const globalX = Math.round(longitudeToWorld(bounds.west));
-  const globalY = Math.round(latitudeToWorld(bounds.north));
-  return {
-    position: [globalX, globalY],
-    width: Math.max(1, Math.round(longitudeToWorld(bounds.east)) - globalX),
-    height: Math.max(1, Math.round(latitudeToWorld(bounds.south)) - globalY),
-    opacity: typeof template.opacity === "number" ? Math.round(template.opacity * 100) : undefined,
-    lock: template.locked,
-    disabled: template.visible === false,
-    name: template.name
-  };
-}
-function fromWplaceFile(raw) {
-  const file = raw;
-  if (typeof file.image?.dataUrl !== "string")
-    throw new Error("Not a valid .wplace template");
-  return { ...placement(file), url: file.image.dataUrl };
-}
-var OVERLAYS_KEY = "template-overlays";
-var TEMPLATES_DB = "wplace-templates";
-var TEMPLATES_STORE = "images";
-function readSiteTemplates() {
-  let overlays;
-  try {
-    overlays = JSON.parse(localStorage.getItem(OVERLAYS_KEY) ?? "[]");
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(overlays))
-    return [];
-  const templates = [];
-  for (let index = 0;index < overlays.length; index++) {
-    const overlay = overlays[index];
-    if (typeof overlay?.id !== "string")
-      continue;
-    try {
-      templates.push({ id: overlay.id, data: placement(overlay) });
-    } catch {}
-  }
-  return templates;
-}
-async function readSiteTemplateImage(id) {
-  const db = await new Promise((resolve) => {
-    const request = indexedDB.open(TEMPLATES_DB);
-    request.onupgradeneeded = () => {
-      request.transaction?.abort();
-    };
-    request.onsuccess = () => {
-      resolve(request.result);
-    };
-    request.onerror = () => {
-      resolve(undefined);
-    };
-  });
-  if (!db?.objectStoreNames.contains(TEMPLATES_STORE)) {
-    db?.close();
-    return;
-  }
-  const blob = await new Promise((resolve) => {
-    const request = db.transaction(TEMPLATES_STORE, "readonly").objectStore(TEMPLATES_STORE).get(id);
-    request.onsuccess = () => {
-      resolve(request.result);
-    };
-    request.onerror = () => {
-      resolve(undefined);
-    };
-  });
-  db.close();
-  if (!blob)
-    return;
-  return new Promise((resolve) => {
-    const reader = new FileReader;
-    reader.onload = () => {
-      resolve(reader.result);
-    };
-    reader.onerror = () => {
-      resolve(undefined);
-    };
-    reader.readAsDataURL(blob);
-  });
-}
-function toWplaceFile(image, order = 0) {
-  const { globalX, globalY } = image;
-  return {
-    id: crypto.randomUUID(),
-    schemaVersion: "1",
-    name: image.name,
-    opacity: image.opacity / 100,
-    image: {
-      dataUrl: image.dataUrl,
-      width: image.width,
-      height: image.height
-    },
-    bounds: {
-      north: worldToLatitude(globalY),
-      south: worldToLatitude(globalY + image.height),
-      west: worldToLongitude(globalX),
-      east: worldToLongitude(globalX + image.width)
-    },
-    colorMetric: "ciede2000",
-    dithering: false,
-    useLegacyColors: false,
-    colorPaletteMode: "all",
-    order,
-    locked: image.lock,
-    hasPlaced: false,
-    visible: image.visible
-  };
-}
-
 // src/image.ts
 function etaText(bot, remaining, cashbackPixels) {
   const cooldownMs = bot.me?.charges.cooldownMs ?? 30000;
   const minutes = estimateEtaMinutes(remaining, bot.me?.charges.count ?? 0, bot.me?.charges.max ?? 0, cooldownMs, bot.lastMeAt === undefined ? 0 : Date.now() - bot.lastMeAt, bot.spendsOnCharges ? bot.me?.droplets ?? 0 : undefined, bot.colorsToBuy().length, cashbackPixels);
   return formatEta(minutes);
 }
-function encodeDataUrl(canvas) {
-  return canvas.convertToBlob({ type: "image/webp", quality: 1 }).then((blob) => new Promise((resolve, reject) => {
-    const reader = new FileReader;
-    reader.onload = () => {
-      resolve(reader.result);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  }));
-}
 
 class BotImage extends Base2 {
   bot;
-  image;
-  static async fromJSON(bot, data, progress) {
-    const image = new Image;
-    const objectUrl = data.url.startsWith("http") ? URL.createObjectURL(await fetch(data.url, { cache: "no-store" }).then((x) => x.blob())) : undefined;
-    const canvas = await (async () => {
-      try {
-        image.src = objectUrl ?? data.url;
-        await promisifyEventSource(image, ["load"], ["error"]);
-        const canvas2 = new OffscreenCanvas(image.naturalWidth, image.naturalHeight);
-        const ctx = canvas2.getContext("2d");
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(image, 0, 0);
-        return canvas2;
-      } finally {
-        if (objectUrl)
-          URL.revokeObjectURL(objectUrl);
-      }
-    })();
-    const botImage = new BotImage(bot, canvas, {
-      ...data,
-      disabledColors: data.disabledColors && new Set(data.disabledColors),
-      position: data.position && WorldPosition.fromJSON(bot, data.position)
-    });
-    await botImage.updatePixels(progress);
-    return botImage;
-  }
+  template;
   pixels = new Uint8Array(0);
-  resolution;
   colorsStat = new Map;
+  error;
+  tasks = new Uint32Array(0);
+  thumbnail = document.createElement("canvas");
   position;
   controller;
-  get height() {
-    return this.controller.settings.height ?? this.width / this.resolution | 0;
-  }
-  get visible() {
-    return !this.disabled && !this.siteDisabled;
-  }
-  get width() {
-    return this.controller.settings.width;
-  }
-  get brightness() {
-    return this.controller.settings.brightness;
-  }
-  get colorMetric() {
-    return this.controller.settings.colorMetric;
-  }
-  get strategy() {
-    return this.controller.settings.strategy;
-  }
-  get opacity() {
-    return this.controller.settings.opacity;
-  }
-  get drawTransparentPixels() {
-    return this.controller.settings.drawTransparentPixels;
-  }
-  get drawColorsInOrder() {
-    return this.controller.settings.drawColorsInOrder;
-  }
-  get colors() {
-    return this.controller.settings.colors;
-  }
-  get disabledColors() {
-    return this.controller.settings.disabledColors;
-  }
-  get lock() {
-    return this.controller.settings.lock;
-  }
-  get disabled() {
-    return this.controller.settings.disabled;
-  }
-  get name() {
-    return this.controller.settings.name;
-  }
-  get unownedColorStrategy() {
-    return this.controller.settings.unownedColorStrategy;
-  }
-  get wplaceId() {
-    return this.controller.settings.wplaceId;
-  }
-  get siteDisabled() {
-    return this.controller.settings.siteDisabled;
-  }
-  get regionOrder() {
-    return this.controller.settings.regionOrder;
-  }
-  get fillDirection() {
-    return this.controller.settings.fillDirection;
-  }
-  get outlineFirst() {
-    return this.controller.settings.outlineFirst;
-  }
-  tasks = new Uint32Array(0);
-  moveInfo;
-  imageData;
-  encodedSource;
   element = document.createElement("div");
-  $canvas;
   context;
-  $brightness;
   $colors;
-  $delete;
   $drawColorsInOrder;
   $drawTransparent;
-  $export;
-  $lock;
-  $opacity;
   $progressLine;
   $progressText;
-  $resetSize;
-  $resetAspect;
-  $resetSizeSpan;
-  $settings;
   $strategy;
-  $exportDialog;
-  $colorMetric;
-  $topbar;
-  $wrapper;
   $name;
   $unownedColorStrategyLabel;
   $unownedColorStrategy;
@@ -2202,55 +1914,29 @@ class BotImage extends Base2 {
   $fillDirection;
   $sortColorsDesc;
   $sortColorsAsc;
-  $openSettings;
   $dialog;
-  constructor(bot, image, {
-    position,
-    ...overrides
-  } = {}) {
+  constructor(bot, template, overrides = {}) {
     super();
     this.bot = bot;
-    this.image = image;
-    this.position = position ?? WorldPosition.fromScreenPosition(bot, { x: 256, y: 32 });
-    this.controller = new ImageController(createImageSettings({
-      width: image.width,
-      name: `${image.width}x${image.height}`,
-      ...overrides
-    }), this.position, {
+    this.template = template;
+    this.position = new WorldPosition(bot, ...template.position);
+    this.controller = new ImageController(createImageSettings(overrides), {
       calculate: (progress) => this.calculate(progress),
       apply: (calculation, progress) => {
         this.applyCalculation(calculation, progress);
       },
-      render: () => {
-        this.updateUI();
-      },
       save: () => save(this.bot)
     });
-    this.bot.images.push(this);
-    this.resolution = image.width / image.height;
-    this.imageData = this.image.getContext("2d").getImageData(0, 0, image.width, image.height).data;
     this.element.innerHTML = obfucsateHTML(image_default);
     addClass(this.element, "image");
     document.body.append(this.element);
     this.populateElementsWithSelector(this.element, {
-      $brightness: ".brightness",
       $colors: ".colors",
-      $delete: ".delete",
       $drawColorsInOrder: ".draw-colors-in-order",
       $drawTransparent: ".draw-transparent",
-      $export: ".export",
-      $lock: ".lock",
-      $opacity: ".opacity",
       $progressLine: ".progress div",
       $progressText: ".progress span",
-      $resetSize: ".reset-size",
-      $resetAspect: ".reset-aspect",
-      $settings: ".form",
       $strategy: ".strategy",
-      $exportDialog: ".export-dialog",
-      $colorMetric: ".color-metric",
-      $topbar: ".topbar",
-      $wrapper: ".wrapper",
       $name: ".name",
       $unownedColorStrategyLabel: ".unowned-color-strategy",
       $outlineFirst: ".outline-first",
@@ -2258,18 +1944,12 @@ class BotImage extends Base2 {
       $fillDirectionLabel: ".fill-direction",
       $sortColorsDesc: ".sort-colors-desc",
       $sortColorsAsc: ".sort-colors-asc",
-      $openSettings: ".open-settings",
-      $dialog: "dialog",
-      $canvas: "canvas"
+      $dialog: "dialog"
     });
-    this.context = this.$canvas.getContext("2d");
+    this.context = this.thumbnail.getContext("2d");
     this.$unownedColorStrategy = this.$unownedColorStrategyLabel.querySelector("select");
     this.$regionOrder = this.$regionOrderLabel.querySelector("select");
     this.$fillDirection = this.$fillDirectionLabel.querySelector("select");
-    this.$resetSizeSpan = this.$resetSize.querySelector("span");
-    this.$openSettings.addEventListener("click", () => {
-      this.$dialog.showModal();
-    });
     this.$dialog.addEventListener("click", (event) => {
       if (event.target === this.$dialog)
         this.$dialog.close();
@@ -2277,11 +1957,6 @@ class BotImage extends Base2 {
     this.$unownedColorStrategy.addEventListener("change", () => {
       this.update({
         unownedColorStrategy: this.$unownedColorStrategy.value
-      });
-    });
-    this.$colorMetric.addEventListener("change", () => {
-      this.update({
-        colorMetric: this.$colorMetric.value
       });
     });
     this.$strategy.addEventListener("change", () => {
@@ -2310,25 +1985,6 @@ class BotImage extends Base2 {
     };
     this.$sortColorsDesc.addEventListener("click", () => void sortColors(false));
     this.$sortColorsAsc.addEventListener("click", () => void sortColors(true));
-    this.$opacity.addEventListener("input", () => {
-      this.update({ opacity: this.$opacity.valueAsNumber });
-    });
-    let brightnessTimeout;
-    this.$brightness.addEventListener("change", () => {
-      clearTimeout(brightnessTimeout);
-      brightnessTimeout = setTimeout(() => {
-        this.update({ brightness: this.$brightness.valueAsNumber });
-      }, 1000);
-    });
-    this.runOnDestroy.push(() => {
-      clearTimeout(brightnessTimeout);
-    });
-    this.$resetSize.addEventListener("click", () => {
-      this.update({ width: this.image.width, height: undefined });
-    });
-    this.$resetAspect.addEventListener("click", () => {
-      this.update({ height: undefined });
-    });
     this.$drawTransparent.addEventListener("click", () => {
       this.update({
         drawTransparentPixels: this.$drawTransparent.checked
@@ -2337,113 +1993,119 @@ class BotImage extends Base2 {
     this.$drawColorsInOrder.addEventListener("click", () => {
       this.update({ drawColorsInOrder: this.$drawColorsInOrder.checked });
     });
-    this.$lock.addEventListener("click", () => {
-      this.update({ lock: !this.lock });
-    });
-    this.$delete.addEventListener("click", this.destroy.bind(this));
-    this.$export.addEventListener("click", () => {
-      this.$exportDialog.showModal();
-    });
-    this.$exportDialog.addEventListener("click", (event) => {
-      if (event.target === this.$exportDialog)
-        this.$exportDialog.close();
-    });
-    for (const [selector, format] of [
-      [".export-wbot", "wbot"],
-      [".export-wplace", "wplace"],
-      [".export-image", "image"]
-    ])
-      querySelector(this.$exportDialog, selector).addEventListener("click", () => this.exportAs(format));
-    this.$name.addEventListener("change", () => {
-      this.update({ name: this.$name.value });
-    });
-    this.bot.fixSpaceInInput(this.$name);
-    if (this.wplaceId) {
-      addClass(this.element, "managed");
-      this.$name.readOnly = true;
-    } else
-      this.$canvas.addEventListener("mousedown", this.moveStart.bind(this));
-    this.$wrapper.addEventListener("wheel", (event) => document.querySelector(".maplibregl-canvas").dispatchEvent(new WheelEvent("wheel", {
-      bubbles: true,
-      deltaX: event.deltaX,
-      deltaY: event.deltaY,
-      deltaZ: event.deltaZ,
-      clientX: event.clientX,
-      clientY: event.clientY
-    })));
-    this.registerEvent(document, "mouseup", this.moveStop.bind(this));
-    this.registerEvent(document, "mousemove", this.move.bind(this));
-    if (!this.wplaceId)
-      for (const $resize of querySelectorAll(this.element, ".resize"))
-        $resize.addEventListener("mousedown", this.resizeStart.bind(this));
+    this.updateUI();
+  }
+  get wplaceId() {
+    return this.template.id;
+  }
+  get name() {
+    return this.template.name;
+  }
+  get width() {
+    return this.template.width;
+  }
+  get height() {
+    return this.template.height;
+  }
+  get visible() {
+    return !this.disabled && this.template.visible && !this.error;
+  }
+  get strategy() {
+    return this.controller.settings.strategy;
+  }
+  get drawTransparentPixels() {
+    return this.controller.settings.drawTransparentPixels;
+  }
+  get drawColorsInOrder() {
+    return this.controller.settings.drawColorsInOrder;
+  }
+  get colors() {
+    return this.controller.settings.colors;
+  }
+  get disabledColors() {
+    return this.controller.settings.disabledColors;
+  }
+  get disabled() {
+    return this.controller.settings.disabled;
+  }
+  get unownedColorStrategy() {
+    return this.controller.settings.unownedColorStrategy;
+  }
+  get regionOrder() {
+    return this.controller.settings.regionOrder;
+  }
+  get fillDirection() {
+    return this.controller.settings.fillDirection;
+  }
+  get outlineFirst() {
+    return this.controller.settings.outlineFirst;
+  }
+  openSettings() {
+    this.updateUI();
+    this.$dialog.showModal();
   }
   async update(changes) {
-    const effect = await this.controller.update(changes);
-    if (effect !== "none" && "name" in changes)
-      this.bot.widget.update();
+    await this.guarded(() => this.controller.update(changes));
+    this.bot.widget.update();
   }
-  async toJSON() {
+  toJSON() {
     return {
-      url: await this.sourceUrl(),
-      width: this.width,
-      height: this.controller.settings.height,
-      brightness: this.brightness,
-      colorMetric: this.colorMetric,
-      position: this.position.toJSON(),
+      wplaceId: this.wplaceId,
       strategy: this.strategy,
-      opacity: this.opacity,
       drawTransparentPixels: this.drawTransparentPixels,
       drawColorsInOrder: this.drawColorsInOrder,
       colors: this.colors,
       disabledColors: Array.from(this.disabledColors),
-      lock: this.lock,
       disabled: this.disabled,
-      name: this.name,
       unownedColorStrategy: this.unownedColorStrategy,
-      wplaceId: this.wplaceId,
-      siteDisabled: this.siteDisabled,
       regionOrder: this.regionOrder,
       fillDirection: this.fillDirection,
-      outlineFirst: this.outlineFirst,
-      version: SAVE_VERSION
+      outlineFirst: this.outlineFirst
     };
   }
-  async applySiteTemplate(data) {
-    const [globalX, globalY] = data.position;
-    const changes = {
-      globalX,
-      globalY,
-      width: data.width,
-      siteDisabled: data.disabled
-    };
-    if (this.height !== data.height)
-      changes.height = data.height;
-    if (data.name !== undefined)
-      changes.name = data.name;
-    if (data.lock !== undefined)
-      changes.lock = data.lock;
-    const effect = await this.controller.update(changes, { save: false });
-    return effect !== "none";
+  async applyTemplate(template) {
+    const previous = this.template;
+    this.template = template;
+    if (template.contentKey === previous.contentKey) {
+      if (template.name !== previous.name)
+        this.updateUI();
+      return template.revision !== previous.revision;
+    }
+    this.position = new WorldPosition(this.bot, ...template.position);
+    await this.updatePixels();
+    return true;
   }
   updatePixels(progress) {
-    return this.controller.recompute(progress);
+    return this.guarded(() => this.controller.recompute(progress));
+  }
+  async guarded(run) {
+    try {
+      await run();
+      this.error = undefined;
+    } catch (error) {
+      console.error(error);
+      this.error = error instanceof Error ? error.message : String(error);
+      this.tasks = new Uint32Array(0);
+    }
+    this.updateUI();
   }
   async calculate(progress) {
-    const { width, height } = this;
+    const { template } = this;
+    const templates = this.bot.templates;
+    if (!templates)
+      throw new Error("Wplace templates are unavailable");
+    const pixels = await templates.pixels(template, this.bot.unavailableColors);
     const result = await workerPixels({
-      data: this.imageData,
-      brightness: this.brightness,
-      colorMetric: this.colorMetric,
+      pixels,
+      width: template.width,
+      height: template.height,
+      colorMetric: template.colorMetric,
       colors: this.colors,
       disabledColors: this.disabledColors,
       drawColorsInOrder: this.drawColorsInOrder,
       drawTransparentPixels: this.drawTransparentPixels,
-      globalX: this.position.globalX,
-      globalY: this.position.globalY,
-      height,
-      width,
-      nativeHeight: this.image.height,
-      nativeWidth: this.image.width,
+      globalX: template.position[0],
+      globalY: template.position[1],
       strategy: this.strategy,
       regionOrder: this.regionOrder,
       fillDirection: this.fillDirection,
@@ -2453,9 +2115,10 @@ class BotImage extends Base2 {
     }, progress ?? ((p) => {
       this.bot.widget.status = `⌛ Loading ${formatPercent(p)}`;
     }));
-    return { result, width, height };
+    return { result, template };
   }
-  applyCalculation({ result, width, height }, progress) {
+  applyCalculation({ result, template }, progress) {
+    const { width, height } = template;
     this.colorsStat = result.colorStat;
     this.tasks = this.visible ? result.taskPositions : new Uint32Array(0);
     this.bot.fetchTileCountries([this]).then((learned) => {
@@ -2463,8 +2126,8 @@ class BotImage extends Base2 {
         this.bot.widget.updateProgress();
     });
     this.pixels = result.pixels;
-    this.$canvas.width = width;
-    this.$canvas.height = height;
+    this.thumbnail.width = width;
+    this.thumbnail.height = height;
     this.context.clearRect(0, 0, width, height);
     const rgbPixels = new Uint8ClampedArray(this.pixels.length * 4);
     for (let index = 0;index < this.pixels.length; index++) {
@@ -2485,33 +2148,10 @@ class BotImage extends Base2 {
       this.bot.widget.status = "";
     this.bot.widget.update();
   }
-  sourceUrl() {
-    if (!this.encodedSource) {
-      const encoding = encodeDataUrl(this.image);
-      this.encodedSource = encoding;
-      encoding.catch(() => {
-        if (this.encodedSource === encoding)
-          this.encodedSource = undefined;
-      });
-    }
-    return this.encodedSource;
-  }
   updateUI() {
-    const { x, y } = this.position.toScreenPosition();
-    this.element.style.transform = `translate(${x}px, ${y}px)`;
-    this.element.style.width = `${this.position.pixelSize * this.width}px`;
-    this.$canvas.style.height = `${this.position.pixelSize * this.height}px`;
-    this.$canvas.style.opacity = `${this.opacity}%`;
-    if (this.visible)
-      removeClass(this.element, "hidden");
-    else
-      addClass(this.element, "hidden");
-    this.$resetSizeSpan.textContent = `${this.width}x${this.height}`;
-    this.$brightness.valueAsNumber = this.brightness;
+    this.$name.textContent = this.name;
     this.$strategy.value = this.strategy;
-    this.$colorMetric.value = this.colorMetric;
-    this.$opacity.valueAsNumber = this.opacity;
-    this.$opacity.style.setProperty("--val", this.opacity + "%");
+    this.$unownedColorStrategy.value = this.unownedColorStrategy;
     this.$drawTransparent.checked = this.drawTransparentPixels;
     this.$drawColorsInOrder.checked = this.drawColorsInOrder;
     this.$outlineFirst.checked = this.outlineFirst;
@@ -2521,13 +2161,7 @@ class BotImage extends Base2 {
       addClass(this.$fillDirectionLabel, "hidden");
     else
       removeClass(this.$fillDirectionLabel, "hidden");
-    this.$name.value = this.name;
     this.updateProgress();
-    if (this.lock)
-      addClass(this.$wrapper, "no-pointer-events");
-    else
-      removeClass(this.$wrapper, "no-pointer-events");
-    this.$lock.textContent = this.lock ? "\uD83D\uDD12" : "\uD83D\uDD13";
   }
   get countedPixels() {
     const total = this.width * this.height;
@@ -2535,20 +2169,21 @@ class BotImage extends Base2 {
       return total;
     return total - (this.colorsStat.get(0)?.amount ?? 0);
   }
+  get progress() {
+    const total = this.countedPixels;
+    const done = total - this.tasks.length / 2;
+    return { done, total, percent: total ? done / total : 0 };
+  }
   updateProgress() {
-    const maxTasks = this.countedPixels;
-    const doneTasks = maxTasks - this.tasks.length / 2;
-    const percent = maxTasks ? doneTasks / maxTasks : 0;
-    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${formatPercent(percent)} ETA: ${etaText(this.bot, this.tasks.length / 2, this.bot.cashbackTasks(this))}`;
-    this.$progressLine.style.transform = `scaleX(${percent})`;
+    const { done, total, percent } = this.progress;
+    this.$progressText.textContent = this.error ? `❌ ${this.error}` : `${done}/${total} ${formatPercent(percent)} ETA: ${etaText(this.bot, this.tasks.length / 2, this.bot.cashbackTasks(this))}`;
+    this.$progressLine.style.transform = `scaleX(${this.error ? 0 : percent})`;
   }
   destroy() {
     this.controller.dispose();
     super.destroy();
     this.element.remove();
     removeFromArray(this.bot.images, this);
-    this.bot.widget.update();
-    save(this.bot);
   }
   updateColors() {
     const LINE_HEIGHT = 20;
@@ -2673,119 +2308,6 @@ class BotImage extends Base2 {
       });
     }
   }
-  moveStart(event) {
-    if (!this.lock)
-      this.moveInfo = {
-        globalX: this.position.globalX,
-        globalY: this.position.globalY,
-        clientX: event.clientX,
-        clientY: event.clientY
-      };
-  }
-  async moveStop() {
-    if (this.moveInfo) {
-      this.moveInfo = undefined;
-      await this.updatePixels();
-    }
-  }
-  move(event) {
-    if (!this.moveInfo)
-      return;
-    const deltaX = Math.round((event.clientX - this.moveInfo.clientX) / this.position.pixelSize);
-    const deltaY = Math.round((event.clientY - this.moveInfo.clientY) / this.position.pixelSize);
-    const changes = {};
-    if (this.moveInfo.globalX !== undefined) {
-      changes.globalX = deltaX + this.moveInfo.globalX;
-      if (this.moveInfo.width !== undefined)
-        changes.width = Math.max(1, this.moveInfo.width - deltaX);
-    } else if (this.moveInfo.width !== undefined)
-      changes.width = Math.max(1, deltaX + this.moveInfo.width);
-    if (this.moveInfo.globalY !== undefined) {
-      changes.globalY = deltaY + this.moveInfo.globalY;
-      if (this.moveInfo.height !== undefined)
-        changes.height = Math.max(1, this.moveInfo.height - deltaY);
-    } else if (this.moveInfo.height !== undefined)
-      changes.height = Math.max(1, deltaY + this.moveInfo.height);
-    this.controller.preview(changes);
-  }
-  resizeStart(event) {
-    this.moveInfo = {
-      clientX: event.clientX,
-      clientY: event.clientY
-    };
-    const $resize = event.target;
-    if (containsClass($resize, "n")) {
-      this.moveInfo.height = this.height;
-      this.moveInfo.globalY = this.position.globalY;
-    }
-    if (containsClass($resize, "e"))
-      this.moveInfo.width = this.width;
-    if (containsClass($resize, "s"))
-      this.moveInfo.height = this.height;
-    if (containsClass($resize, "w")) {
-      this.moveInfo.width = this.width;
-      this.moveInfo.globalX = this.position.globalX;
-    }
-  }
-  async exportAs(format) {
-    this.$exportDialog.close();
-    const a = document.createElement("a");
-    document.body.append(a);
-    const download = (href, name) => {
-      a.href = href;
-      a.download = name;
-      a.click();
-      URL.revokeObjectURL(href);
-    };
-    const json = (data) => URL.createObjectURL(new Blob([JSON.stringify(data)], { type: "application/json" }));
-    switch (format) {
-      case "wplace": {
-        download(json(toWplaceFile({
-          dataUrl: this.$canvas.toDataURL("image/png"),
-          globalX: this.position.globalX,
-          globalY: this.position.globalY,
-          width: this.width,
-          height: this.height,
-          name: this.name,
-          opacity: this.opacity,
-          lock: this.lock,
-          visible: this.visible
-        }, this.bot.images.indexOf(this))), `${this.name}.wplace`);
-        break;
-      }
-      case "image": {
-        download(this.$canvas.toDataURL("image/webp", 1), `${this.name}.webp`);
-        break;
-      }
-      default: {
-        download(json(await this.toJSON()), `${this.name}.wbot`);
-      }
-    }
-    a.remove();
-  }
-}
-
-// src/errors.ts
-class WPlaceBotError extends Error {
-  name = "WPlaceBotError";
-  constructor(message, bot) {
-    super(message);
-    bot.widget.status = message;
-  }
-}
-
-class NoImageError extends WPlaceBotError {
-  name = "NoImageError";
-  constructor(bot) {
-    super("❌ No image is selected", bot);
-  }
-}
-
-class NoMapError extends WPlaceBotError {
-  name = "NoMapError";
-  constructor(bot) {
-    super("❌ Couldn't find wplace's map. The site has probably changed.", bot);
-  }
 }
 
 // src/map.ts
@@ -2799,6 +2321,9 @@ new PerformanceObserver((list) => {
       chunkUrls.add(name);
   }
 }).observe({ buffered: true, type: "resource" });
+function loadedChunkUrls() {
+  return [...chunkUrls];
+}
 var store;
 function isStore(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) && "automatedClicks" in value && "map" in value;
@@ -2836,6 +2361,278 @@ async function findMap(bot, timeoutMs = 60000) {
   throw new NoMapError(bot);
 }
 
+// src/site/template-data.ts
+function parseSiteTemplates(raw) {
+  if (!Array.isArray(raw))
+    throw new Error("Wplace template list is unreadable");
+  const result = [];
+  const ids = new Set;
+  for (const value of raw) {
+    if (!value || typeof value !== "object")
+      throw new Error("Wplace template metadata is unreadable");
+    const item = value;
+    if (item.serverManaged || item.hasPlaced === false)
+      continue;
+    const { id, name, bounds } = item;
+    if (typeof id !== "string" || !id || ids.has(id) || typeof name !== "string" || !bounds || ![bounds.west, bounds.east, bounds.north, bounds.south].every((n) => typeof n === "number" && Number.isFinite(n)))
+      throw new Error("Wplace template metadata is unreadable");
+    ids.add(id);
+    const x1 = Math.round(longitudeToWorld(bounds.west));
+    const x2 = Math.round(longitudeToWorld(bounds.east));
+    const y1 = Math.round(latitudeToWorld(bounds.north));
+    const y2 = Math.round(latitudeToWorld(bounds.south));
+    const metric = item.colorMetric ?? "lab";
+    const mode = item.colorPaletteMode ?? "all";
+    if (!["lab", "ciede2000", "compuphase"].includes(metric) || !["all", "free", "template", "unlocked"].includes(mode))
+      throw new Error("Unsupported Wplace template color settings");
+    const palette = item.templateColorIdxs;
+    if (palette !== undefined && (!Array.isArray(palette) || palette.some((n) => typeof n !== "number" || !Number.isInteger(n) || n < 1 || n >= COLORS_RGB.length)))
+      throw new Error("Unsupported Wplace template palette");
+    const template = {
+      id,
+      name,
+      position: [Math.min(x1, x2), Math.min(y1, y2)],
+      width: Math.max(1, Math.abs(x2 - x1)),
+      height: Math.max(1, Math.abs(y2 - y1)),
+      visible: item.visible !== false,
+      colorMetric: metric,
+      dithering: item.dithering === true,
+      useLegacyColors: item.useLegacyColors === true,
+      colorPaletteMode: mode,
+      templateColorIdxs: palette,
+      revision: "",
+      contentKey: ""
+    };
+    if (!Number.isSafeInteger(template.width * template.height) || !template.position.every(Number.isFinite))
+      throw new Error("Wplace template bounds are unreadable");
+    template.revision = JSON.stringify([template, item.updatedAt ?? null]);
+    template.contentKey = JSON.stringify([
+      template.position,
+      template.width,
+      template.height,
+      template.visible,
+      template.colorMetric,
+      template.dithering,
+      template.colorPaletteMode,
+      template.templateColorIdxs ?? null,
+      item.updatedAt ?? null
+    ]);
+    result.push(template);
+  }
+  return result;
+}
+function allowedTemplateColors(template, unavailable) {
+  switch (template.colorPaletteMode) {
+    case "free":
+      return Array.from({ length: 31 }, (_, i) => i + 1);
+    case "unlocked":
+      return Array.from({ length: COLORS_RGB.length - 1 }, (_, i) => i + 1).filter((i) => !unavailable.has(i));
+    case "template":
+    case "all":
+      return;
+  }
+}
+var paletteIndices = new Map(COLORS_RGB.map((rgb, index) => [rgb, index]));
+function indexTemplatePixels(data, width, height) {
+  if (data.length !== width * height * 4)
+    throw new Error("Invalid Wplace pixel dimensions");
+  const pixels = new Uint8Array(width * height);
+  for (let i = 0;i < pixels.length; i++) {
+    const offset = i * 4;
+    if (data[offset + 3] < 16)
+      continue;
+    const index = paletteIndices.get(data[offset] << 16 | data[offset + 1] << 8 | data[offset + 2]);
+    if (index === undefined || index === 0)
+      throw new Error("Wplace returned an unsupported palette color");
+    pixels[i] = index;
+  }
+  return pixels;
+}
+function usedPaletteIndices(data) {
+  const used = new Set;
+  for (let offset = 0;offset < data.length; offset += 4) {
+    if (data[offset + 3] < 16)
+      continue;
+    const index = paletteIndices.get(data[offset] << 16 | data[offset + 1] << 8 | data[offset + 2]);
+    if (index)
+      used.add(index);
+  }
+  return [...used].sort((a, b) => a - b);
+}
+function planTemplateSync(imageIds, savedIds, templates) {
+  const present = new Set(templates.map((template) => template.id));
+  const shown = new Set(imageIds);
+  const saved = new Set(savedIds);
+  return {
+    remove: imageIds.filter((id) => !present.has(id)),
+    create: [
+      ...savedIds.filter((id) => present.has(id) && !shown.has(id)),
+      ...templates.map((template) => template.id).filter((id) => !shown.has(id) && !saved.has(id))
+    ]
+  };
+}
+
+// src/site/template-runtime.ts
+function matchingExport(module, test) {
+  const matches = Object.values(module).filter((value) => typeof value === "function" && test(Function.prototype.toString.call(value)));
+  if (matches.length !== 1)
+    throw new Error("Wplace template functions are incompatible; reload after updating the bot");
+  return matches[0];
+}
+function resolveTemplateRuntime(storeModule, imageModule, resizeModule) {
+  const stores = Object.values(storeModule).filter((value) => {
+    if (!value || typeof value !== "object")
+      return false;
+    const store = value;
+    return Array.isArray(store.templates) && typeof store.subscribeChange === "function";
+  });
+  if (stores.length !== 1)
+    throw new Error("Wplace template store is unavailable");
+  return {
+    store: stores[0],
+    decode: matchingExport(imageModule, (s) => s.includes("getImageData") && s.includes(".arrayBuffer(") && s.includes("finally")),
+    quantize: matchingExport(imageModule, (s) => /^function\s*\*/.test(s) && s.includes("Float32Array") && s.includes("7/16")),
+    subscribeImage: matchingExport(imageModule, (s) => s.length < 250 && s.includes(".add(") && s.includes(".delete(") && !s.includes("try")),
+    resize: matchingExport(resizeModule, (s) => s.includes("copyWithin") && s.includes("timeSliceMs") && s.includes(".signal"))
+  };
+}
+function referencedChunks(source, base) {
+  const result = new Set;
+  for (const match of source.matchAll(/["'`]((?:\.\.\/|\.\/)?(?:chunks\/|nodes\/)?[\w.-]+\.js)["'`]/g)) {
+    const url = new URL(match[1], base);
+    if (url.origin === new URL(base).origin && url.pathname.startsWith("/_app/immutable/"))
+      result.add(url.href);
+  }
+  return [...result];
+}
+async function discoverTemplateRuntime(initialUrls) {
+  const pending = [...new Set(initialUrls)];
+  const seen = new Set(pending);
+  let storeUrl;
+  let imageUrl;
+  let resizeUrl;
+  for (let offset = 0;offset < pending.length && offset < 600; offset += 8) {
+    await Promise.all(pending.slice(offset, offset + 8).map(async (url) => {
+      try {
+        const response = await fetch(url, {
+          signal: AbortSignal.timeout(1e4)
+        });
+        if (!response.ok)
+          return;
+        const source = await response.text();
+        if (source.includes("template-overlays") && source.includes("subscribeChange"))
+          storeUrl = url;
+        if (source.includes("wplace-templates") && source.includes("Template blob change listener failed."))
+          imageUrl = url;
+        if (source.includes("Image resize aborted.") && source.includes("timeSliceMs"))
+          resizeUrl = url;
+        for (const dependency of referencedChunks(source, url))
+          if (!seen.has(dependency)) {
+            seen.add(dependency);
+            pending.push(dependency);
+          }
+      } catch {}
+    }));
+    if (storeUrl && imageUrl && resizeUrl) {
+      const [storeModule, imageModule, resizeModule] = await Promise.all([
+        import(storeUrl),
+        import(imageUrl),
+        import(resizeUrl)
+      ]);
+      return resolveTemplateRuntime(storeModule, imageModule, resizeModule);
+    }
+  }
+  throw new Error("Wplace template integration is unavailable; reload after updating the bot");
+}
+
+// src/site/templates.ts
+var TEMPLATES_DB = "wplace-templates";
+var TEMPLATES_STORE = "images";
+var SLICE_MS = 12;
+function openSiteDatabase() {
+  return new Promise((resolve) => {
+    const request = indexedDB.open(TEMPLATES_DB);
+    request.onupgradeneeded = () => {
+      request.transaction?.abort();
+    };
+    request.onsuccess = () => {
+      resolve(request.result);
+    };
+    request.onerror = () => {
+      resolve(undefined);
+    };
+  });
+}
+async function readSourceBlob(id) {
+  const db = await openSiteDatabase();
+  if (!db?.objectStoreNames.contains(TEMPLATES_STORE)) {
+    db?.close();
+    return;
+  }
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction(TEMPLATES_STORE, "readonly").objectStore(TEMPLATES_STORE).get(id);
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+      request.onerror = () => {
+        reject(request.error ?? new Error("Wplace template image is unreadable"));
+      };
+    });
+  } finally {
+    db.close();
+  }
+}
+
+class SiteTemplates {
+  runtime;
+  static async connect() {
+    return new SiteTemplates(await discoverTemplateRuntime(loadedChunkUrls()));
+  }
+  constructor(runtime) {
+    this.runtime = runtime;
+  }
+  list() {
+    return parseSiteTemplates(this.runtime.store.templates);
+  }
+  subscribe(listener) {
+    const unsubscribers = [
+      this.runtime.store.subscribeChange(listener),
+      this.runtime.subscribeImage(listener)
+    ];
+    return () => {
+      for (const unsubscribe of unsubscribers)
+        unsubscribe();
+    };
+  }
+  async pixels(template, unavailableColors, signal) {
+    const blob = await readSourceBlob(template.id);
+    if (!blob)
+      throw new Error("Wplace template image is missing");
+    const source = await this.runtime.decode(blob);
+    const { colorMetric, dithering } = template;
+    let allowed = allowedTemplateColors(template, unavailableColors);
+    if (template.colorPaletteMode === "template") {
+      const probe = new ImageData(new Uint8ClampedArray(source.data), source.width, source.height);
+      await this.quantize(probe, colorMetric, false, undefined);
+      allowed = usedPaletteIndices(probe.data);
+    }
+    const scaled = await this.runtime.resize(source, template.width, template.height, { signal });
+    await this.quantize(scaled, colorMetric, dithering, allowed);
+    signal?.throwIfAborted();
+    return indexTemplatePixels(scaled.data, scaled.width, scaled.height);
+  }
+  async quantize(image, metric, dithering, allowed) {
+    const rows = this.runtime.quantize(image.data, image.width, image.height, metric, dithering, allowed, new Map);
+    let sliceStart = performance.now();
+    while (!rows.next().done)
+      if (performance.now() - sliceStart >= SLICE_MS) {
+        await wait(0);
+        sliceStart = performance.now();
+      }
+  }
+}
+
 // src/style.css
 var style_default = `/* stylelint-disable declaration-no-important */
 /* stylelint-disable plugin/no-low-performance-animation-properties */
@@ -2844,7 +2641,6 @@ var style_default = `/* stylelint-disable declaration-no-important */
 
 :root {
   --text-invert: #fff;
-  --resize: 8px;
   --text: #422e2c;
   --background: #fbe3cb;
   --background-hover: #f0d1b3;
@@ -2920,33 +2716,48 @@ var style_default = `/* stylelint-disable declaration-no-important */
 .widget .images .item {
   display: grid;
   grid-template-areas:
-    'canvas name name name'
+    'canvas name name settings'
+    'canvas progress progress progress'
     'canvas toggle up down';
-  grid-template-columns: 48px 1fr auto auto; /* canvas fixed, name flexible, up/down auto */
+  grid-template-columns: 48px minmax(0, 1fr) 32px 32px;
   gap: 4px;
   width: 100%;
-  height: 64px;
-  margin-bottom: 4px;
+  min-height: 72px;
+  margin-bottom: 8px;
+  padding: 4px 4px 8px;
+  border-top: var(--text) 2px solid;
 }
 
 .widget .images .item canvas {
   grid-area: canvas;
+  image-rendering: pixelated;
   margin-right: 4px;
   cursor: pointer;
 }
 
 .widget .images .item .name {
-  display: block;
   grid-area: name;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.widget .images .item .item-progress {
+  grid-area: progress;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .widget .images .item .toggle {
   display: flex;
   grid-area: toggle;
   gap: 4px;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
-  font-size: 18px;
+  min-width: 0;
+  font-size: 16px;
 }
 
 .widget .images .item .up {
@@ -2963,23 +2774,18 @@ var style_default = `/* stylelint-disable declaration-no-important */
   line-height: 100%;
 }
 
-/** Image */
-.image {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 9;
+.widget .images .item .settings {
+  grid-area: settings;
+  width: 32px;
 }
 
+.widget .hint {
+  font-size: 14px;
+}
+
+/** Image */
 .image * {
   font-family: 'Tiny5', sans-serif;
-}
-
-.image canvas {
-  image-rendering: pixelated;
-  width: 100%;
-  box-shadow: inset var(--text) 0 0 0 2px;
-  cursor: all-scroll;
 }
 
 dialog.form {
@@ -2993,37 +2799,6 @@ dialog.form {
 
 dialog.form::backdrop {
   background: rgb(0 0 0 / 70%);
-}
-
-dialog.export-dialog {
-  margin: auto;
-  border: var(--text) 2px solid;
-  background-color: var(--background);
-  color: var(--text);
-}
-
-dialog.export-dialog::backdrop {
-  background: rgb(0 0 0 / 70%);
-}
-
-.export-dialog[open] {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-}
-
-.export-dialog button {
-  padding: 8px 12px;
-  border: var(--text) 2px solid;
-  background-color: var(--background);
-  color: var(--text);
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.export-dialog button:hover {
-  background-color: var(--background-hover);
 }
 
 /* Settings */
@@ -3156,75 +2931,6 @@ dialog.export-dialog::backdrop {
   height: 100%;
 }
 
-/* Topbar */
-.topbar {
-  position: absolute;
-  top: -24px;
-  left: 0;
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-width: min-content;
-  min-width: 256px;
-  border: var(--text) 2px solid;
-  background-color: var(--main);
-  color: var(--text-invert);
-  cursor: all-scroll;
-}
-
-.topbar .name {
-  width: 100%;
-  height: 100%;
-  padding: 0 4px;
-}
-
-.topbar button {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  width: 24px;
-  height: 24px;
-}
-
-.topbar button:hover {
-  background-color: var(--main-hover);
-}
-
-/* Resize */
-.resize {
-  position: absolute;
-  width: calc(100% - var(--resize) - var(--resize));
-  height: calc(100% - var(--resize) - var(--resize));
-}
-
-.resize.n {
-  top: 0;
-  left: var(--resize);
-  height: var(--resize);
-  cursor: n-resize;
-}
-
-.resize.e {
-  top: var(--resize);
-  right: 0;
-  width: var(--resize);
-  cursor: e-resize;
-}
-
-.resize.s {
-  bottom: 0;
-  left: var(--resize);
-  height: var(--resize);
-  cursor: s-resize;
-}
-
-.resize.w {
-  top: var(--resize);
-  left: 0;
-  width: var(--resize);
-  cursor: w-resize;
-}
-
 /* Utility */
 .p {
   padding: 0 8px;
@@ -3232,11 +2938,6 @@ dialog.export-dialog::backdrop {
 
 .hidden {
   display: none;
-}
-
-.no-pointer-events {
-  height: 1px;
-  pointer-events: none;
 }
 
 /* A setting that only means something while its parent is on */
@@ -3252,47 +2953,34 @@ dialog.export-dialog::backdrop {
 .colors-sort button {
   flex: 1;
 }
-
-/** Site-managed templates: the site owns placement, so hide our editors */
-.image.managed .resize,
-.image.managed .lock,
-.image.managed .delete,
-.image.managed .reset-size,
-.image.managed .reset-aspect {
-  display: none;
-}
-
-.image.managed canvas {
-  cursor: default;
-}
 `;
 
 // src/widget.html
-var widget_default = `<button class="open-button">
-  <div>></div>
-</button>
-<input class="title" type="text">
-<div class="form">
-  <div class="progress">
-    <div></div><span></span>
-  </div>
-  <div class="p status"></div>
-  <button class="draw" disabled>Draw</button>
-  <button class="auto-draw" disabled>Auto-Draw</button>
-  <label>Strategy:&nbsp;<select class="strategy">
-      <option value="SEQUENTIAL" selected>Sequential</option>
-      <option value="ALL">All</option>
-      <option value="PERCENTAGE">Percentage</option>
-    </select></label>
-  <label
-    title="Painted pixels earn droplets. 500 droplets buy 30 charges, 2000 buy a color. To keep the balance off colors entirely, set an image's Unowned Colors to Skip or Substitute">Droplets:&nbsp;<select
-      class="droplet-strategy">
-      <option value="COLORS" selected>Colors only</option>
-      <option value="COLORS_FIRST">Colors first</option>
-    </select></label>
-  <button class="add-image" disabled>Add image</button>
-  <!-- <button class="pumpkin-hunt" disabled>Pumpkin Hunt!</button> -->
-  <div class="images"></div>
+var widget_default = `<button class="open-button">\r
+  <div>></div>\r
+</button>\r
+<input class="title" type="text">\r
+<div class="form">\r
+  <div class="progress">\r
+    <div></div><span></span>\r
+  </div>\r
+  <div class="p status"></div>\r
+  <button class="draw" disabled>Draw</button>\r
+  <button class="auto-draw" disabled>Auto-Draw</button>\r
+  <label>Strategy:&nbsp;<select class="strategy">\r
+      <option value="SEQUENTIAL" selected>Sequential</option>\r
+      <option value="ALL">All</option>\r
+      <option value="PERCENTAGE">Percentage</option>\r
+    </select></label>\r
+  <label\r
+    title="Painted pixels earn droplets. 500 droplets buy 30 charges, 2000 buy a color. To keep the balance off colors entirely, set an image's Unowned Colors to Skip or Substitute">Droplets:&nbsp;<select\r
+      class="droplet-strategy">\r
+      <option value="COLORS" selected>Colors only</option>\r
+      <option value="COLORS_FIRST">Colors first</option>\r
+    </select></label>\r
+  <!-- <button class="pumpkin-hunt" disabled>Pumpkin Hunt!</button> -->\r
+  <div class="p hint"></div>\r
+  <div class="images"></div>\r
 </div>`;
 
 // src/widget.ts
@@ -3321,12 +3009,13 @@ class Widget extends Base2 {
   $topbar;
   $title;
   $draw;
-  $addImage;
   $strategy;
   $dropletStrategy;
   $progressLine;
   $progressText;
   $images;
+  $hint;
+  rowProgress = new Map;
   $openButton;
   $autoDraw;
   constructor(bot) {
@@ -3343,12 +3032,12 @@ class Widget extends Base2 {
       $topbar: ".topbar",
       $title: ".title",
       $draw: ".draw",
-      $addImage: ".add-image",
       $strategy: ".strategy",
       $dropletStrategy: ".droplet-strategy",
       $progressLine: ".progress div",
       $progressText: ".progress span",
       $images: ".images",
+      $hint: ".hint",
       $autoDraw: ".auto-draw"
     });
     this.$openButton.addEventListener("click", () => {
@@ -3363,7 +3052,6 @@ class Widget extends Base2 {
     });
     this.bot.fixSpaceInInput(this.$title);
     this.$draw.addEventListener("click", () => this.bot.draw());
-    this.$addImage.addEventListener("click", () => this.addImage());
     this.$strategy.addEventListener("change", () => {
       this.bot.strategy = this.$strategy.value;
     });
@@ -3379,48 +3067,14 @@ class Widget extends Base2 {
     }, 1000);
     this.open = this.bot.widgetOpen;
   }
-  addImage() {
-    this.setDisabled("add-image", true);
-    return this.run("Adding image", async () => {
-      await this.bot.updateColorsData();
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "image/*,.wbot,.wplace";
-      input.click();
-      await promisifyEventSource(input, ["change"], ["cancel", "error"]);
-      const file = input.files?.[0];
-      if (!file)
-        throw new NoImageError(this.bot);
-      if (file.name.endsWith(".wplace")) {
-        let data;
-        try {
-          data = fromWplaceFile(JSON.parse(await file.text()));
-        } catch {
-          throw new WPlaceBotError("❌ Broken .wplace template", this.bot);
-        }
-        await BotImage.fromJSON(this.bot, data);
-      } else if (file.name.endsWith(".wbot")) {
-        await BotImage.fromJSON(this.bot, migrateImage(JSON.parse(await file.text())));
-      } else {
-        const reader = new FileReader;
-        reader.readAsDataURL(file);
-        await promisifyEventSource(reader, ["load"], ["error"]);
-        await BotImage.fromJSON(this.bot, {
-          url: reader.result
-        });
-      }
-      await save(this.bot, true);
-      document.location.reload();
-    }, () => {
-      this.setDisabled("add-image", false);
-    });
-  }
   update() {
     this.$title.value = this.bot.title;
     this.$strategy.value = this.bot.strategy;
     this.$dropletStrategy.value = this.bot.dropletStrategy;
     this.updateProgress();
     this.$images.innerHTML = "";
+    this.rowProgress.clear();
+    this.$hint.textContent = this.hint();
     for (let index = 0;index < this.bot.images.length; index++) {
       const image = this.bot.images[index];
       const $image = document.createElement("div");
@@ -3428,35 +3082,43 @@ class Widget extends Base2 {
       $image.className = SID + "item";
       $image.innerHTML = obfucsateHTML(`
 <canvas></canvas>
-<input type="text" class="name">
+<span class="name"></span>
+<span class="item-progress"></span>
 <label class="toggle">
   <input type="checkbox" class="enabled" ${image.disabled ? "" : "checked"}>
   <span>${image.disabled ? "Disabled" : "Enabled"}</span>
 </label>
 <button class="up" title="Move up" ${index === 0 ? "disabled" : ""}>▴</button>
-<button class="down" title="Move down" ${index === this.bot.images.length - 1 ? "disabled" : ""}>▾</button>`);
+<button class="down" title="Move down" ${index === this.bot.images.length - 1 ? "disabled" : ""}>▾</button>
+<button class="settings" title="Drawing settings">⚙️</button>`);
       const $canvas = $image.querySelector("canvas");
       $canvas.width = 48;
       $canvas.height = 64;
-      const scale = Math.min(48 / image.width, 64 / image.height);
-      const w = image.width * scale;
-      const h = image.height * scale;
-      $canvas.getContext("2d").drawImage(image.$canvas, (48 - w) / 2, (64 - h) / 2, w, h);
+      if (image.thumbnail.width > 0 && image.thumbnail.height > 0) {
+        const scale = Math.min(48 / image.thumbnail.width, 64 / image.thumbnail.height);
+        const w = image.thumbnail.width * scale;
+        const h = image.thumbnail.height * scale;
+        const context = $canvas.getContext("2d");
+        context.imageSmoothingEnabled = false;
+        context.drawImage(image.thumbnail, (48 - w) / 2, (64 - h) / 2, w, h);
+      }
+      $canvas.title = "Go to template";
       $canvas.addEventListener("click", () => {
         image.position.moveScreenTo();
       });
       const $name = querySelector($image, ".name");
-      $name.value = image.name;
-      $name.addEventListener("change", () => {
-        image.update({ name: $name.value });
-      });
+      $name.textContent = image.name;
+      $name.title = image.name;
+      const $progress = querySelector($image, ".item-progress");
+      this.rowProgress.set(image, $progress);
+      this.paintRowProgress(image, $progress);
       const $enabled = querySelector($image, ".enabled");
-      if (image.wplaceId)
-        $name.readOnly = true;
       $enabled.addEventListener("change", () => {
         image.update({ disabled: !$enabled.checked });
       });
-      this.bot.fixSpaceInInput($name);
+      querySelector($image, ".settings").addEventListener("click", () => {
+        image.openSettings();
+      });
       querySelector($image, ".up").addEventListener("click", () => {
         swap(this.bot.images, index, index - 1);
         this.update();
@@ -3468,6 +3130,25 @@ class Widget extends Base2 {
         save(this.bot);
       });
     }
+  }
+  hint() {
+    if (this.bot.images.length > 0)
+      return "";
+    const archived = this.bot.archivedImageCount;
+    return [
+      "Create and place a template in wplace's own template manager. It will show up here.",
+      archived > 0 ? `${archived} older image${archived === 1 ? "" : "s"} not linked to wplace ${archived === 1 ? "was" : "were"} left out of drawing and kept in an archive.` : ""
+    ].filter(Boolean).join(" ");
+  }
+  paintRowProgress(image, $progress) {
+    if (image.error) {
+      $progress.textContent = `❌ ${image.error}`;
+      $progress.title = image.error;
+      return;
+    }
+    const { done, total, percent } = image.progress;
+    $progress.textContent = `${done}/${total} ${formatPercent(percent)}`;
+    $progress.title = "";
   }
   updateProgress() {
     let maxTasks = 0;
@@ -3488,6 +3169,9 @@ class Widget extends Base2 {
     for (let index = 0;index < this.bot.images.length; index++) {
       const image = this.bot.images[index];
       image.updateProgress();
+      const $progress = this.rowProgress.get(image);
+      if ($progress)
+        this.paintRowProgress(image, $progress);
     }
   }
   setDisabled(name, disabled) {
@@ -3531,6 +3215,13 @@ class WPlaceBot {
     return this.dropletStrategy !== "COLORS" /* COLORS */;
   }
   images = [];
+  templates;
+  dormant = new Map;
+  archivedImageCount = 0;
+  drawInvalidated = false;
+  templateSignature = "";
+  syncChain = Promise.resolve();
+  syncTimer;
   tileCountries = new Map;
   pendingTiles = new Set;
   cashbackCache = new WeakMap;
@@ -3542,19 +3233,20 @@ class WPlaceBot {
   markerPixelPositionResolvers = [];
   lastColor;
   paintResolver;
-  constructor(save2) {
-    if (save2) {
-      this.strategy = save2.strategy;
-      this.dropletStrategy = save2.dropletStrategy;
-      this.title = save2.title;
-      this.widgetOpen = save2.widgetOpen;
-      this.tileCountries = new Map(save2.tileCountries);
+  constructor(save) {
+    if (save) {
+      this.strategy = save.strategy;
+      this.dropletStrategy = save.dropletStrategy;
+      this.title = save.title;
+      this.widgetOpen = save.widgetOpen;
+      this.tileCountries = new Map(save.tileCountries);
+      this.archivedImageCount = save.archivedImageCount ?? 0;
+      for (const image of save.images)
+        this.dormant.set(image.wplaceId, image);
     } else {
       this.title = "WPlace-bot";
     }
     this.widget = new Widget(this);
-    const known = new Set(save2?.images.map((image) => image.wplaceId));
-    const newTemplates = readSiteTemplates().filter((template) => !known.has(template.id));
     this.registerFetchInterceptor();
     const style = document.createElement("style");
     style.textContent = obfuscateCSS(style_default);
@@ -3567,30 +3259,20 @@ class WPlaceBot {
       await this.waitForElement(".maplibregl-canvas-container");
       progress(0.03);
       this.map = await findMap(this);
-      const redraw = () => {
-        for (let index = 0;index < this.images.length; index++)
-          this.images[index].updateUI();
-      };
-      this.map.on("move", redraw);
-      this.map.on("resize", redraw);
       await wait(500);
       progress(0.04);
       await this.updateColorsData();
       progress(0.05);
-      if (save2) {
-        const batchSize = 1 / save2.images.length;
-        for (let index = 0;index < save2.images.length; index++) {
-          await BotImage.fromJSON(this, save2.images[index], (p) => {
-            progress(0.05 + (index * batchSize + p * batchSize) * 0.95);
-          });
-        }
-      }
-      await this.importSiteTemplates(newTemplates);
-      await this.syncSiteTemplates();
-      this.watchSiteTemplates();
+      const templateError = await this.syncTemplates((p) => {
+        progress(0.05 + p * 0.95);
+      });
+      this.watchTemplates();
       this.widget.setDisabled("draw", false);
       this.widget.setDisabled("auto-draw", false);
-      this.widget.setDisabled("add-image", false);
+      return templateError;
+    }).then((templateError) => {
+      if (templateError)
+        this.widget.status = `❌ ${templateError}`;
     }).catch(async () => {
       if (window.confirm(`WPlace-bot couldn't load!
 Do you want to CLEAR ALL DATA to fix it?
@@ -3627,21 +3309,25 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         event.stopPropagation();
     };
     return this.widget.run("Drawing", async (progress) => {
+      const syncError = await this.syncTemplates();
+      if (syncError)
+        throw new WPlaceBotError(`❌ ${syncError}`, this);
       const firstImage = this.images[0];
       if (!firstImage)
         return;
       this.drawing = true;
+      this.drawInvalidated = false;
       globalThis.addEventListener("mousemove", prevent, true);
       $canvas.addEventListener("wheel", prevent, true);
       this.zoomIn(4);
-      await this.widget.run("Loading", (progress2) => Promise.all([
+      await this.widget.run("Loading", (progress) => Promise.all([
         this.updateColorsData().then(async () => {
           workerClearMapCache();
           await wait(100);
           const batchSize = 1 / this.images.length;
           for (let index = 0;index < this.images.length; index++)
             await this.images[index].updatePixels((p) => {
-              progress2(index * batchSize + p * batchSize);
+              progress(index * batchSize + p * batchSize);
             });
         }),
         fetch("https://backend.wplace.live/me", {
@@ -3681,6 +3367,10 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       }
       const indexes = new Map;
       const drawTask = async (image) => {
+        if (this.drawInvalidated) {
+          charges = 0;
+          return;
+        }
         let index = indexes.get(image);
         if (index === undefined)
           indexes.set(image, index = 0);
@@ -3768,6 +3458,11 @@ Developer will try to fix your save. Be vary that github issues are public, and 
           }
         }
       }
+      if (this.drawIsStale()) {
+        if (this.autoDrawInterval)
+          this.autoDraw();
+        throw new WPlaceBotError("⚠ A template changed during drawing. Clear the pixels already staged on the map, then draw again", this);
+      }
       const queued = initialCharges - charges;
       const meBeforePaint = this.lastMeAt;
       const painted = submit && queued > 0 ? await this.submitPaint(queued) : 0;
@@ -3789,6 +3484,8 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         return this.draw(submit);
     }, () => {
       this.drawing = false;
+      if (this.drawInvalidated)
+        this.scheduleSync(0);
       globalThis.removeEventListener("mousemove", prevent, true);
       $canvas.removeEventListener("wheel", prevent, true);
       this.widget.setDisabled("draw", false);
@@ -3870,83 +3567,113 @@ Developer will try to fix your save. Be vary that github issues are public, and 
     }, 1000);
     return true;
   }
-  async toJSON() {
-    return {
+  toJSON() {
+    return Promise.resolve({
       version: SAVE_VERSION,
-      images: await Promise.all(this.images.map((x) => x.toJSON())),
+      images: [
+        ...this.images.map((image) => image.toJSON()),
+        ...this.dormant.values()
+      ],
       strategy: this.strategy,
       dropletStrategy: this.dropletStrategy,
       title: this.title,
       widgetOpen: this.widgetOpen,
       tileCountries: [...this.tileCountries]
-    };
-  }
-  async importSiteTemplates(templates) {
-    if (templates.length === 0)
-      return;
-    await this.widget.run("Importing templates", async (progress) => {
-      const batchSize = 1 / templates.length;
-      for (let index = 0;index < templates.length; index++) {
-        const template = templates[index];
-        const url = await readSiteTemplateImage(template.id);
-        if (!url)
-          continue;
-        await BotImage.fromJSON(this, {
-          ...template.data,
-          opacity: 0,
-          url,
-          wplaceId: template.id,
-          disabled: false,
-          siteDisabled: template.data.disabled
-        }, (p) => {
-          progress(index * batchSize + p * batchSize);
-        });
-      }
     });
-    await save(this, true);
   }
-  watchSiteTemplates() {
-    let snapshot = localStorage.getItem(OVERLAYS_KEY);
-    let syncing = false;
-    setInterval(() => {
-      if (this.drawing || syncing)
-        return;
-      const current = localStorage.getItem(OVERLAYS_KEY);
-      if (current === snapshot)
-        return;
-      snapshot = current;
-      syncing = true;
-      this.syncSiteTemplates().finally(() => {
-        syncing = false;
-      });
-    }, 1000);
+  syncTemplates(progress) {
+    const run = this.syncChain.then(() => this.runSync(progress));
+    this.syncChain = run;
+    return run;
   }
-  async syncSiteTemplates() {
-    const templates = new Map(readSiteTemplates().map((template) => [template.id, template.data]));
-    let changed = false;
-    for (let index = this.images.length - 1;index >= 0; index--) {
-      const image = this.images[index];
-      if (!image.wplaceId)
-        continue;
-      const data = templates.get(image.wplaceId);
-      if (data) {
-        templates.delete(image.wplaceId);
-        if (await image.applySiteTemplate(data))
+  async runSync(progress) {
+    let list;
+    try {
+      if (!this.templates) {
+        const templates = await SiteTemplates.connect();
+        templates.subscribe(this.onTemplatesChanged);
+        this.templates = templates;
+      }
+      list = this.templates.list();
+    } catch (error) {
+      console.error(error);
+      return error instanceof Error ? error.message : String(error);
+    }
+    const byId = new Map(list.map((template) => [template.id, template]));
+    const plan = planTemplateSync(this.images.map((image) => image.wplaceId), [...this.dormant.keys()], list);
+    let changed = plan.remove.length > 0 || plan.create.length > 0;
+    for (const image of [...this.images]) {
+      const template = byId.get(image.wplaceId);
+      if (template) {
+        if (await image.applyTemplate(template))
           changed = true;
       } else {
+        this.dormant.set(image.wplaceId, image.toJSON());
         image.destroy();
-        changed = true;
       }
     }
-    if (templates.size !== 0) {
-      const fresh = [...templates].map(([id, data]) => ({ id, data }));
-      await this.importSiteTemplates(fresh);
-      changed = true;
+    for (let index = 0;index < plan.create.length; index++) {
+      const id = plan.create[index];
+      const saved = this.dormant.get(id);
+      this.dormant.delete(id);
+      const image = new BotImage(this, byId.get(id), saved && { ...saved, disabledColors: new Set(saved.disabledColors) });
+      this.images.push(image);
+      await image.updatePixels((p) => {
+        progress?.((index + p) / plan.create.length);
+      });
     }
+    this.templateSignature = list.map((template) => template.revision).join();
     if (changed) {
       this.widget.update();
       await save(this, true);
     }
+    return;
+  }
+  scheduleSync(delayMs = 250) {
+    clearTimeout(this.syncTimer);
+    this.syncTimer = setTimeout(() => {
+      this.syncTemplates().then((error) => {
+        if (error && !this.drawing)
+          this.widget.status = `❌ ${error}`;
+      });
+    }, delayMs);
+  }
+  drawIsStale() {
+    return this.drawInvalidated;
+  }
+  onTemplatesChanged = () => {
+    if (!this.drawing)
+      this.scheduleSync();
+    else if (this.drawnTemplatesChanged())
+      this.drawInvalidated = true;
+  };
+  drawnTemplatesChanged() {
+    try {
+      const byId = new Map(this.templates.list().map((template) => [template.id, template]));
+      return this.images.some((image) => {
+        const template = byId.get(image.wplaceId);
+        return template?.contentKey !== image.template.contentKey;
+      });
+    } catch {
+      return false;
+    }
+  }
+  watchTemplates() {
+    setInterval(() => {
+      if (this.drawing || !this.templates)
+        return;
+      try {
+        const signature = this.templates.list().map((template) => template.revision).join();
+        if (signature !== this.templateSignature)
+          this.scheduleSync();
+      } catch {}
+    }, 5000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && !this.drawing)
+        this.scheduleSync(0);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    globalThis.addEventListener("focus", onVisible);
   }
   colorsToBuy() {
     const amounts = new Map;
