@@ -2,6 +2,7 @@ const DB_NAME = 'wbot'
 const STORE_NAME = 'saves'
 const DB_VERSION = 1
 export const SAVE_KEY = 'wbot'
+export const PRE_SITE_TEMPLATES_KEY = 'wbot-pre-site-templates-v11'
 
 let database: Promise<IDBDatabase> | undefined
 
@@ -56,6 +57,37 @@ export async function idbSet(key: string, value: unknown): Promise<void> {
     }
     transaction.onabort = () => {
       reject(transaction.error ?? new Error('Save transaction aborted'))
+    }
+  })
+}
+
+export async function archiveAndMigrateSave(
+  original: unknown,
+  migrated: unknown,
+): Promise<void> {
+  const db = await openDatabase()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readwrite')
+    const store = transaction.objectStore(STORE_NAME)
+    const request = store.get(PRE_SITE_TEMPLATES_KEY)
+    request.onsuccess = () => {
+      try {
+        if (request.result === undefined)
+          store.add(original, PRE_SITE_TEMPLATES_KEY)
+        store.put(migrated, SAVE_KEY)
+      } catch (error) {
+        transaction.abort()
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    }
+    transaction.oncomplete = () => {
+      resolve()
+    }
+    transaction.onerror = () => {
+      reject(transaction.error ?? new Error('Save migration failed'))
+    }
+    transaction.onabort = () => {
+      reject(transaction.error ?? new Error('Save migration aborted'))
     }
   })
 }

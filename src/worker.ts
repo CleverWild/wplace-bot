@@ -1,4 +1,4 @@
-import { calculatePixels } from './processing/pipeline'
+import { calculatePixels, validatePixelsRequest } from './processing/pipeline'
 import {
   type WorkerPixelsRequest,
   type WorkerResponse,
@@ -23,6 +23,7 @@ self.onmessage = async (
     send({ id: request.id, progress: p })
   }
   try {
+    validatePixelsRequest(request)
     const maps = await tiles.load(
       request.globalX,
       request.globalY,

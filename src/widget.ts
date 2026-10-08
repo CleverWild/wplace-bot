@@ -1,10 +1,10 @@
-import { promisifyEventSource, swap } from '@softsky/utils'
+import { swap } from '@softsky/utils'
 
 import { Base } from './base'
 import { WPlaceBot } from './bot'
 import { type BotStrategy, type DropletStrategy } from './drawing/policy'
-import { NoImageError, WPlaceBotError } from './errors'
-import { BotImage, etaText } from './image'
+import { WPlaceBotError } from './errors'
+import { type BotImage, etaText } from './image'
 import {
   addClass,
   containsClass,
@@ -14,12 +14,10 @@ import {
   SID,
   toggleClass,
 } from './obfuscator'
-import { migrateImage } from './persistence/migrations'
 import { save } from './save'
 import { formatPercent } from './utils'
 // @ts-ignore
 import html from './widget.html' with { type: 'text' }
-import { fromWplaceFile } from './wplace-file'
 
 /** Widget UI with buttons */
 export class Widget extends Base {
@@ -48,12 +46,13 @@ export class Widget extends Base {
   protected readonly $topbar!: HTMLDivElement
   protected readonly $title!: HTMLInputElement
   protected readonly $draw!: HTMLButtonElement
-  protected readonly $addImage!: HTMLButtonElement
   protected readonly $strategy!: HTMLInputElement
   protected readonly $dropletStrategy!: HTMLSelectElement
   protected readonly $progressLine!: HTMLDivElement
   protected readonly $progressText!: HTMLSpanElement
   protected readonly $images!: HTMLDivElement
+  protected readonly $hint!: HTMLDivElement
+  protected readonly rowProgress = new Map<BotImage, HTMLElement>()
   protected readonly $openButton!: HTMLButtonElement
   public readonly $autoDraw!: HTMLButtonElement
 
@@ -73,12 +72,12 @@ export class Widget extends Base {
       $topbar: '.topbar',
       $title: '.title',
       $draw: '.draw',
-      $addImage: '.add-image',
       $strategy: '.strategy',
       $dropletStrategy: '.droplet-strategy',
       $progressLine: '.progress div',
       $progressText: '.progress span',
       $images: '.images',
+      $hint: '.hint',
       $autoDraw: '.auto-draw',
       // $pumpkinHunt: '.pumpkin-hunt',
     })
@@ -97,7 +96,6 @@ export class Widget extends Base {
     this.bot.fixSpaceInInput(this.$title)
     this.$draw.addEventListener('click', () => this.bot.draw())
     // this.$pumpkinHunt.addEventListener('click', () => this.pumpkinHunt())
-    this.$addImage.addEventListener('click', () => this.addImage())
     this.$strategy.addEventListener('change', () => {
       this.bot.strategy = this.$strategy.value as BotStrategy
     })
@@ -116,50 +114,6 @@ export class Widget extends Base {
     this.open = this.bot.widgetOpen
   }
 
-  /** Add image handler */
-  public addImage() {
-    this.setDisabled('add-image', true)
-    return this.run(
-      'Adding image',
-      async () => {
-        await this.bot.updateColorsData()
-        const input = document.createElement('input')
-        input.type = 'file'
-        input.accept = 'image/*,.wbot,.wplace'
-        input.click()
-        await promisifyEventSource(input, ['change'], ['cancel', 'error'])
-        const file = input.files?.[0]
-        if (!file) throw new NoImageError(this.bot)
-        if (file.name.endsWith('.wplace')) {
-          let data
-          try {
-            data = fromWplaceFile(JSON.parse(await file.text()))
-          } catch {
-            throw new WPlaceBotError('❌ Broken .wplace template', this.bot)
-          }
-          await BotImage.fromJSON(this.bot, data)
-        } else if (file.name.endsWith('.wbot')) {
-          await BotImage.fromJSON(
-            this.bot,
-            migrateImage(JSON.parse(await file.text()) as unknown),
-          )
-        } else {
-          const reader = new FileReader()
-          reader.readAsDataURL(file)
-          await promisifyEventSource(reader, ['load'], ['error'])
-          await BotImage.fromJSON(this.bot, {
-            url: reader.result as string,
-          })
-        }
-        await save(this.bot, true)
-        document.location.reload()
-      },
-      () => {
-        this.setDisabled('add-image', false)
-      },
-    )
-  }
-
   /** Update widget position and contents */
   public update() {
     this.$title.value = this.bot.title
@@ -169,6 +123,8 @@ export class Widget extends Base {
 
     // Images
     this.$images.innerHTML = ''
+    this.rowProgress.clear()
+    this.$hint.textContent = this.hint()
     for (let index = 0; index < this.bot.images.length; index++) {
       const image = this.bot.images[index]!
       const $image = document.createElement('div')
@@ -176,42 +132,52 @@ export class Widget extends Base {
       $image.className = SID + 'item'
       $image.innerHTML = obfucsateHTML(`
 <canvas></canvas>
-<input type="text" class="name">
+<span class="name"></span>
+<span class="item-progress"></span>
 <label class="toggle">
   <input type="checkbox" class="enabled" ${image.disabled ? '' : 'checked'}>
   <span>${image.disabled ? 'Disabled' : 'Enabled'}</span>
 </label>
 <button class="up" title="Move up" ${index === 0 ? 'disabled' : ''}>▴</button>
-<button class="down" title="Move down" ${index === this.bot.images.length - 1 ? 'disabled' : ''}>▾</button>`)
+<button class="down" title="Move down" ${index === this.bot.images.length - 1 ? 'disabled' : ''}>▾</button>
+<button class="settings" title="Drawing settings">⚙️</button>`)
 
       // Draw copy in center
       const $canvas = $image.querySelector<HTMLCanvasElement>('canvas')!
       $canvas.width = 48
       $canvas.height = 64
-      const scale = Math.min(48 / image.width, 64 / image.height)
-      const w = image.width * scale
-      const h = image.height * scale
-      $canvas
-        .getContext('2d')!
-        .drawImage(image.$canvas, (48 - w) / 2, (64 - h) / 2, w, h)
+      if (image.thumbnail.width > 0 && image.thumbnail.height > 0) {
+        const scale = Math.min(
+          48 / image.thumbnail.width,
+          64 / image.thumbnail.height,
+        )
+        const w = image.thumbnail.width * scale
+        const h = image.thumbnail.height * scale
+        const context = $canvas.getContext('2d')!
+        context.imageSmoothingEnabled = false
+        context.drawImage(image.thumbnail, (48 - w) / 2, (64 - h) / 2, w, h)
+      }
+      $canvas.title = 'Go to template'
       $canvas.addEventListener('click', () => {
         image.position.moveScreenTo()
       })
 
-      const $name = querySelector<HTMLInputElement>($image, '.name')!
-      $name.value = image.name
-      $name.addEventListener('change', () => {
-        void image.update({ name: $name.value })
-      })
+      const $name = querySelector<HTMLSpanElement>($image, '.name')!
+      $name.textContent = image.name
+      $name.title = image.name
+      const $progress = querySelector<HTMLSpanElement>(
+        $image,
+        '.item-progress',
+      )!
+      this.rowProgress.set(image, $progress)
+      this.paintRowProgress(image, $progress)
       const $enabled = querySelector<HTMLInputElement>($image, '.enabled')!
-      // The name belongs to the site for imported templates, but the switch
-      // is ours: the site's own visibility is tracked separately
-      if (image.wplaceId) $name.readOnly = true
       $enabled.addEventListener('change', () => {
         void image.update({ disabled: !$enabled.checked })
       })
-      // Close on input to not consume space
-      this.bot.fixSpaceInInput($name)
+      querySelector($image, '.settings')!.addEventListener('click', () => {
+        image.openSettings()
+      })
       querySelector($image, '.up')!.addEventListener('click', () => {
         swap(this.bot.images, index, index - 1)
         this.update()
@@ -223,6 +189,30 @@ export class Widget extends Base {
         void save(this.bot)
       })
     }
+  }
+
+  protected hint() {
+    if (this.bot.images.length > 0) return ''
+    const archived = this.bot.archivedImageCount
+    return [
+      "Create and place a template in wplace's own template manager. It will show up here.",
+      archived > 0
+        ? `${archived} older image${archived === 1 ? '' : 's'} not linked to wplace ${archived === 1 ? 'was' : 'were'} left out of drawing and kept in an archive.`
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' ')
+  }
+
+  protected paintRowProgress(image: BotImage, $progress: HTMLElement) {
+    if (image.error) {
+      $progress.textContent = `❌ ${image.error}`
+      $progress.title = image.error
+      return
+    }
+    const { done, total, percent } = image.progress
+    $progress.textContent = `${done}/${total} ${formatPercent(percent)}`
+    $progress.title = ''
   }
 
   public updateProgress() {
@@ -243,6 +233,8 @@ export class Widget extends Base {
     for (let index = 0; index < this.bot.images.length; index++) {
       const image = this.bot.images[index]!
       image.updateProgress()
+      const $progress = this.rowProgress.get(image)
+      if ($progress) this.paintRowProgress(image, $progress)
     }
   }
 

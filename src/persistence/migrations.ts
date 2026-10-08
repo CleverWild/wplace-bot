@@ -1,10 +1,9 @@
-import { DropletStrategy } from '../drawing/policy'
-import { UnownedColorStrategy } from '../image/model'
+import { BotStrategy, DropletStrategy } from '../drawing/policy'
+import { createImageSettings, UnownedColorStrategy } from '../image/model'
 import { FillDirection, ImageStrategy, RegionOrder } from '../ordering'
 
-import { type LoadedBot, type LoadedImage, SAVE_VERSION } from './schema'
+import { type LoadedBot, SAVE_VERSION, type SavedImage } from './schema'
 
-/** Every field some version of the save format has had */
 type Fields = Record<string, unknown> & {
   version?: unknown
   pixels?: unknown
@@ -25,6 +24,12 @@ type Fields = Record<string, unknown> & {
   dropletStrategy?: unknown
   widgetOpen?: unknown
   tileCountries?: unknown
+  colors?: unknown
+  disabledColors?: unknown
+  unownedColorStrategy?: unknown
+  fillDirection?: unknown
+  outlineFirst?: unknown
+  title?: unknown
 }
 
 function isFields(value: unknown): value is Fields {
@@ -44,8 +49,7 @@ function versionOf(fields: Fields) {
   return typeof fields.version === 'number' ? fields.version : 0
 }
 
-/** How to migrate save data for images */
-export function migrateImage(old: unknown): LoadedImage {
+function migrateLegacyImage(old: unknown): Fields {
   if (!isFields(old)) throw new Error('Saved image is not an object')
   let image = old
   if (versionOf(image) < 3) {
@@ -102,14 +106,70 @@ export function migrateImage(old: unknown): LoadedImage {
       version: 6,
     }
   }
-  if (typeof image.url !== 'string')
-    throw new Error('Saved image has no source url')
-  return image as LoadedImage
+  return image
 }
 
-/** How to migrate save data */
+export function migrateImage(old: unknown, legacy = false): SavedImage {
+  if (!isFields(old)) throw new Error('Saved image is not an object')
+  const image = legacy ? migrateLegacyImage(old) : old
+  if (typeof image.wplaceId !== 'string' || image.wplaceId.length === 0)
+    throw new Error('Saved template has no Wplace ID')
+  const defaults = createImageSettings()
+  const colorList = (value: unknown): number[] =>
+    Array.isArray(value)
+      ? value.filter(
+          (color): color is number =>
+            typeof color === 'number' &&
+            Number.isInteger(color) &&
+            color >= 0 &&
+            color < 64,
+        )
+      : []
+  return {
+    wplaceId: image.wplaceId,
+    strategy: Object.values(ImageStrategy).includes(
+      image.strategy as ImageStrategy,
+    )
+      ? (image.strategy as ImageStrategy)
+      : defaults.strategy,
+    drawTransparentPixels:
+      typeof image.drawTransparentPixels === 'boolean'
+        ? image.drawTransparentPixels
+        : defaults.drawTransparentPixels,
+    drawColorsInOrder:
+      typeof image.drawColorsInOrder === 'boolean'
+        ? image.drawColorsInOrder
+        : defaults.drawColorsInOrder,
+    colors: colorList(image.colors),
+    disabledColors: colorList(image.disabledColors),
+    disabled:
+      typeof image.disabled === 'boolean' ? image.disabled : defaults.disabled,
+    unownedColorStrategy: Object.values(UnownedColorStrategy).includes(
+      image.unownedColorStrategy as UnownedColorStrategy,
+    )
+      ? (image.unownedColorStrategy as UnownedColorStrategy)
+      : defaults.unownedColorStrategy,
+    regionOrder: Object.values(RegionOrder).includes(
+      image.regionOrder as RegionOrder,
+    )
+      ? (image.regionOrder as RegionOrder)
+      : defaults.regionOrder,
+    fillDirection: Object.values(FillDirection).includes(
+      image.fillDirection as FillDirection,
+    )
+      ? (image.fillDirection as FillDirection)
+      : defaults.fillDirection,
+    outlineFirst:
+      typeof image.outlineFirst === 'boolean'
+        ? image.outlineFirst
+        : defaults.outlineFirst,
+  }
+}
+
 export function migrate(old: unknown): LoadedBot {
   if (!isFields(old)) throw new Error('Save is not an object')
+  if (versionOf(old) > SAVE_VERSION)
+    throw new Error('Save version is newer than this bot')
   let save = old
   if (versionOf(save) < 3)
     save = {
@@ -135,12 +195,39 @@ export function migrate(old: unknown): LoadedBot {
   if (versionOf(save) < 9) save = { ...save, widgetOpen: true, version: 9 }
   if (versionOf(save) < 10) save = { ...save, tileCountries: [], version: 10 }
   if (!Array.isArray(save.images)) throw new Error('Save has no image list')
-  // Images carry their own version, so migrate them whatever the save says
+  const images: SavedImage[] = []
+  const seen = new Set<string>()
+  let archivedImageCount = 0
+  for (const image of save.images) {
+    if (
+      versionOf(old) < 11 &&
+      (!isFields(image) ||
+        typeof image.wplaceId !== 'string' ||
+        !image.wplaceId)
+    ) {
+      archivedImageCount++
+      continue
+    }
+    const migrated = migrateImage(image, versionOf(old) < 11)
+    if (!seen.has(migrated.wplaceId)) {
+      seen.add(migrated.wplaceId)
+      images.push(migrated)
+    }
+  }
   return {
-    ...(save as Omit<LoadedBot, 'images'>),
     version: SAVE_VERSION,
-    images: save.images.map(migrateImage),
-    // Only a cache, so a broken entry is dropped rather than failing the load
+    images,
+    strategy: Object.values(BotStrategy).includes(save.strategy as BotStrategy)
+      ? (save.strategy as BotStrategy)
+      : BotStrategy.ALL,
+    dropletStrategy: Object.values(DropletStrategy).includes(
+      save.dropletStrategy as DropletStrategy,
+    )
+      ? (save.dropletStrategy as DropletStrategy)
+      : DropletStrategy.COLORS,
+    title: typeof save.title === 'string' ? save.title : 'WPlace-bot',
+    widgetOpen: typeof save.widgetOpen === 'boolean' ? save.widgetOpen : true,
+    ...(archivedImageCount > 0 ? { archivedImageCount } : {}),
     tileCountries: Array.isArray(save.tileCountries)
       ? save.tileCountries.filter(isTileCountry)
       : [],

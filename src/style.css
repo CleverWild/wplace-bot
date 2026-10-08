@@ -5,7 +5,6 @@
 
 :root {
   --text-invert: #fff;
-  --resize: 8px;
   --text: #422e2c;
   --background: #fbe3cb;
   --background-hover: #f0d1b3;
@@ -81,33 +80,48 @@
 .widget .images .item {
   display: grid;
   grid-template-areas:
-    'canvas name name name'
+    'canvas name name settings'
+    'canvas progress progress progress'
     'canvas toggle up down';
-  grid-template-columns: 48px 1fr auto auto; /* canvas fixed, name flexible, up/down auto */
+  grid-template-columns: 48px minmax(0, 1fr) 32px 32px;
   gap: 4px;
   width: 100%;
-  height: 64px;
-  margin-bottom: 4px;
+  min-height: 72px;
+  margin-bottom: 8px;
+  padding: 4px 4px 8px;
+  border-top: var(--text) 2px solid;
 }
 
 .widget .images .item canvas {
   grid-area: canvas;
+  image-rendering: pixelated;
   margin-right: 4px;
   cursor: pointer;
 }
 
 .widget .images .item .name {
-  display: block;
   grid-area: name;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.widget .images .item .item-progress {
+  grid-area: progress;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .widget .images .item .toggle {
   display: flex;
   grid-area: toggle;
   gap: 4px;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
-  font-size: 18px;
+  min-width: 0;
+  font-size: 16px;
 }
 
 .widget .images .item .up {
@@ -124,23 +138,18 @@
   line-height: 100%;
 }
 
-/** Image */
-.image {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 9;
+.widget .images .item .settings {
+  grid-area: settings;
+  width: 32px;
 }
 
+.widget .hint {
+  font-size: 14px;
+}
+
+/** Image */
 .image * {
   font-family: 'Tiny5', sans-serif;
-}
-
-.image canvas {
-  image-rendering: pixelated;
-  width: 100%;
-  box-shadow: inset var(--text) 0 0 0 2px;
-  cursor: all-scroll;
 }
 
 dialog.form {
@@ -154,37 +163,6 @@ dialog.form {
 
 dialog.form::backdrop {
   background: rgb(0 0 0 / 70%);
-}
-
-dialog.export-dialog {
-  margin: auto;
-  border: var(--text) 2px solid;
-  background-color: var(--background);
-  color: var(--text);
-}
-
-dialog.export-dialog::backdrop {
-  background: rgb(0 0 0 / 70%);
-}
-
-.export-dialog[open] {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-}
-
-.export-dialog button {
-  padding: 8px 12px;
-  border: var(--text) 2px solid;
-  background-color: var(--background);
-  color: var(--text);
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.export-dialog button:hover {
-  background-color: var(--background-hover);
 }
 
 /* Settings */
@@ -317,75 +295,6 @@ dialog.export-dialog::backdrop {
   height: 100%;
 }
 
-/* Topbar */
-.topbar {
-  position: absolute;
-  top: -24px;
-  left: 0;
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-width: min-content;
-  min-width: 256px;
-  border: var(--text) 2px solid;
-  background-color: var(--main);
-  color: var(--text-invert);
-  cursor: all-scroll;
-}
-
-.topbar .name {
-  width: 100%;
-  height: 100%;
-  padding: 0 4px;
-}
-
-.topbar button {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  width: 24px;
-  height: 24px;
-}
-
-.topbar button:hover {
-  background-color: var(--main-hover);
-}
-
-/* Resize */
-.resize {
-  position: absolute;
-  width: calc(100% - var(--resize) - var(--resize));
-  height: calc(100% - var(--resize) - var(--resize));
-}
-
-.resize.n {
-  top: 0;
-  left: var(--resize);
-  height: var(--resize);
-  cursor: n-resize;
-}
-
-.resize.e {
-  top: var(--resize);
-  right: 0;
-  width: var(--resize);
-  cursor: e-resize;
-}
-
-.resize.s {
-  bottom: 0;
-  left: var(--resize);
-  height: var(--resize);
-  cursor: s-resize;
-}
-
-.resize.w {
-  top: var(--resize);
-  left: 0;
-  width: var(--resize);
-  cursor: w-resize;
-}
-
 /* Utility */
 .p {
   padding: 0 8px;
@@ -393,11 +302,6 @@ dialog.export-dialog::backdrop {
 
 .hidden {
   display: none;
-}
-
-.no-pointer-events {
-  height: 1px;
-  pointer-events: none;
 }
 
 /* A setting that only means something while its parent is on */
@@ -412,17 +316,4 @@ dialog.export-dialog::backdrop {
 
 .colors-sort button {
   flex: 1;
-}
-
-/** Site-managed templates: the site owns placement, so hide our editors */
-.image.managed .resize,
-.image.managed .lock,
-.image.managed .delete,
-.image.managed .reset-size,
-.image.managed .reset-aspect {
-  display: none;
-}
-
-.image.managed canvas {
-  cursor: default;
 }

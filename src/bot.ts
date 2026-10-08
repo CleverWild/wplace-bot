@@ -1,6 +1,7 @@
 import { wait } from '@softsky/utils'
 
 import { BotStrategy, DropletStrategy } from './drawing/policy'
+import { WPlaceBotError } from './errors'
 import {
   cashbackCharges,
   countCashbackTasks,
@@ -18,9 +19,12 @@ import {
   type LoadedBot,
   SAVE_VERSION,
   type SavedBot,
+  type SavedImage,
 } from './persistence/schema'
 import { deleteAllData } from './persistence/store'
 import { loadSave, save } from './save'
+import { planTemplateSync, type SiteTemplate } from './site/template-data'
+import { SiteTemplates } from './site/templates'
 // @ts-ignore
 import css from './style.css' with { type: 'text' }
 import {
@@ -38,11 +42,6 @@ import {
   WorldPosition,
   zoomForPixelSize,
 } from './world-position'
-import {
-  OVERLAYS_KEY,
-  readSiteTemplateImage,
-  readSiteTemplates,
-} from './wplace-file'
 
 export type Me = {
   allianceId: number
@@ -113,8 +112,24 @@ export class WPlaceBot {
     return this.dropletStrategy !== DropletStrategy.COLORS
   }
 
-  /** Images on canvas */
+  /** Templates of wplace's own manager that are drawn, in drawing order */
   public images: BotImage[] = []
+
+  /** Reader of wplace's template manager, once its client was recognised */
+  public templates?: SiteTemplates
+
+  /** Settings of templates that are gone from the site, kept to restore them */
+  protected dormant = new Map<string, SavedImage>()
+
+  /** Older images with no wplace template, left out of drawing by the save migration */
+  public archivedImageCount = 0
+
+  /** Set when a template changed under a running draw; its queue is stale */
+  protected drawInvalidated = false
+
+  protected templateSignature = ''
+  protected syncChain: Promise<unknown> = Promise.resolve()
+  protected syncTimer?: ReturnType<typeof setTimeout>
 
   /** Country of every tile seen so far. It never changes, so it is saved */
   public tileCountries = new Map<number, number>()
@@ -159,17 +174,13 @@ export class WPlaceBot {
       this.title = save.title
       this.widgetOpen = save.widgetOpen
       this.tileCountries = new Map(save.tileCountries)
+      this.archivedImageCount = save.archivedImageCount ?? 0
+      for (const image of save.images) this.dormant.set(image.wplaceId, image)
     } else {
       this.title = 'WPlace-bot'
     }
 
     this.widget = new Widget(this)
-
-    // Templates placed in wplace's own manager that aren't in the save yet
-    const known = new Set(save?.images.map((image) => image.wplaceId))
-    const newTemplates = readSiteTemplates().filter(
-      (template) => !known.has(template.id),
-    )
 
     this.registerFetchInterceptor()
 
@@ -190,34 +201,23 @@ export class WPlaceBot {
         await this.waitForElement('.maplibregl-canvas-container')
         progress(0.03)
         this.map = await findMap(this)
-        const redraw = () => {
-          for (let index = 0; index < this.images.length; index++)
-            this.images[index]!.updateUI()
-        }
-        this.map.on('move', redraw)
-        this.map.on('resize', redraw)
         await wait(500) // Sometimes wplace UI becomes bugged if interacted too early
         progress(0.04)
         await this.updateColorsData()
         progress(0.05)
-        // Load images
-        if (save) {
-          const batchSize = 1 / save.images.length
-          for (let index = 0; index < save.images.length; index++) {
-            await BotImage.fromJSON(this, save.images[index]!, (p) => {
-              progress(0.05 + (index * batchSize + p * batchSize) * 0.95)
-            })
-          }
-        }
-        await this.importSiteTemplates(newTemplates)
-        // Catch up on anything that changed while the tab was closed
-        await this.syncSiteTemplates()
-        this.watchSiteTemplates()
+        // Pick up the templates placed in wplace's own manager
+        const templateError = await this.syncTemplates((p) => {
+          progress(0.05 + p * 0.95)
+        })
+        this.watchTemplates()
         // Unblock buttons
         this.widget.setDisabled('draw', false)
         this.widget.setDisabled('auto-draw', false)
-        this.widget.setDisabled('add-image', false)
         // this.widget.setDisabled('pumpkin-hunt', false)
+        return templateError
+      })
+      .then((templateError) => {
+        if (templateError) this.widget.status = `❌ ${templateError}`
       })
       .catch(async () => {
         if (
@@ -276,9 +276,12 @@ export class WPlaceBot {
     return this.widget.run(
       'Drawing',
       async (progress) => {
+        const syncError = await this.syncTemplates()
+        if (syncError) throw new WPlaceBotError(`❌ ${syncError}`, this)
         const firstImage = this.images[0]
         if (!firstImage) return
         this.drawing = true
+        this.drawInvalidated = false
 
         // Stop mouse messing with drawing by capturing event
         globalThis.addEventListener('mousemove', prevent, true)
@@ -365,6 +368,11 @@ export class WPlaceBot {
         const indexes = new Map<BotImage, number>()
 
         const drawTask = async (image: BotImage) => {
+          // A queue calculated from an older template must not be added to
+          if (this.drawInvalidated) {
+            charges = 0
+            return undefined
+          }
           let index = indexes.get(image)
           if (index === undefined) indexes.set(image, (index = 0))
           const dIndex = index * 2
@@ -479,6 +487,14 @@ export class WPlaceBot {
           }
         }
 
+        if (this.drawIsStale()) {
+          if (this.autoDrawInterval) this.autoDraw()
+          throw new WPlaceBotError(
+            '⚠ A template changed during drawing. Clear the pixels already staged on the map, then draw again',
+            this,
+          )
+        }
+
         // Nothing is painted until wplace's own button goes out. A run that
         // sends the queue itself learns here what it cost; one that leaves the
         // button to the user has painted nothing yet and must claim nothing
@@ -533,6 +549,7 @@ export class WPlaceBot {
       },
       () => {
         this.drawing = false
+        if (this.drawInvalidated) this.scheduleSync(0)
         globalThis.removeEventListener('mousemove', prevent, true)
         $canvas.removeEventListener('wheel', prevent, true)
         this.widget.setDisabled('draw', false)
@@ -656,102 +673,147 @@ export class WPlaceBot {
   }
 
   /** Serialize bot */
-  public async toJSON(): Promise<SavedBot> {
-    return {
+  public toJSON(): Promise<SavedBot> {
+    return Promise.resolve({
       version: SAVE_VERSION,
-      images: await Promise.all(this.images.map((x) => x.toJSON())),
+      images: [
+        ...this.images.map((image) => image.toJSON()),
+        ...this.dormant.values(),
+      ],
       strategy: this.strategy,
       dropletStrategy: this.dropletStrategy,
       title: this.title,
       widgetOpen: this.widgetOpen,
       tileCountries: [...this.tileCountries],
-    }
-  }
-
-  /** Pull templates out of wplace's own manager */
-  protected async importSiteTemplates(
-    templates: ReturnType<typeof readSiteTemplates>,
-  ) {
-    if (templates.length === 0) return
-    await this.widget.run('Importing templates', async (progress) => {
-      const batchSize = 1 / templates.length
-      for (let index = 0; index < templates.length; index++) {
-        const template = templates[index]!
-        const url = await readSiteTemplateImage(template.id)
-        if (!url) continue
-        await BotImage.fromJSON(
-          this,
-          // Opacity stays ours: the site draws its own overlay, so ours is
-          // hidden until the user wants to compare. Visibility is the site's,
-          // so it lands in `siteDisabled` and leaves our switch alone
-          {
-            ...template.data,
-            opacity: 0,
-            url,
-            wplaceId: template.id,
-            disabled: false,
-            siteDisabled: template.data.disabled,
-          },
-          (p) => {
-            progress(index * batchSize + p * batchSize)
-          },
-        )
-      }
     })
-    await save(this, true)
   }
 
   /**
-   * Follow wplace's template manager.
-   * Its writes to localStorage fire no event in the tab that made them, so
-   * this polls. Comparing the raw string first keeps it to a string compare
-   * on the vast majority of ticks.
+   * Make our images match the templates of wplace's own manager.
+   * Resolves to a message when wplace's side could not be read. That is never
+   * treated as "no templates": the saved settings stay as they are.
    */
-  protected watchSiteTemplates() {
-    let snapshot = localStorage.getItem(OVERLAYS_KEY)
-    let syncing = false
-    // The bot lives as long as the page does, so this is never cleared
-    setInterval(() => {
-      // Syncing deletes images, which would derail the draw loop
-      if (this.drawing || syncing) return
-      const current = localStorage.getItem(OVERLAYS_KEY)
-      if (current === snapshot) return
-      snapshot = current
-      syncing = true
-      void this.syncSiteTemplates().finally(() => {
-        syncing = false
-      })
-    }, 1000)
+  public syncTemplates(
+    progress?: (p: number) => void,
+  ): Promise<string | undefined> {
+    const run = this.syncChain.then(() => this.runSync(progress))
+    this.syncChain = run
+    return run
   }
 
-  /** Make our copies match the site's templates */
-  protected async syncSiteTemplates() {
-    const templates = new Map(
-      readSiteTemplates().map((template) => [template.id, template.data]),
+  protected async runSync(
+    progress?: (p: number) => void,
+  ): Promise<string | undefined> {
+    let list: SiteTemplate[]
+    try {
+      if (!this.templates) {
+        const templates = await SiteTemplates.connect()
+        templates.subscribe(this.onTemplatesChanged)
+        this.templates = templates
+      }
+      list = this.templates.list()
+    } catch (error) {
+      console.error(error)
+      return error instanceof Error ? error.message : String(error)
+    }
+    const byId = new Map(list.map((template) => [template.id, template]))
+    const plan = planTemplateSync(
+      this.images.map((image) => image.wplaceId),
+      [...this.dormant.keys()],
+      list,
     )
-    let changed = false
-    for (let index = this.images.length - 1; index >= 0; index--) {
-      const image = this.images[index]!
-      if (!image.wplaceId) continue
-      const data = templates.get(image.wplaceId)
-      if (data) {
-        templates.delete(image.wplaceId)
-        if (await image.applySiteTemplate(data)) changed = true
+    let changed = plan.remove.length > 0 || plan.create.length > 0
+    for (const image of [...this.images]) {
+      const template = byId.get(image.wplaceId)
+      if (template) {
+        if (await image.applyTemplate(template)) changed = true
       } else {
-        // Removed on the site, so it goes here too
+        // Gone from the site: stop drawing it, keep its settings for a restore
+        this.dormant.set(image.wplaceId, image.toJSON())
         image.destroy()
-        changed = true
       }
     }
-    if (templates.size !== 0) {
-      const fresh = [...templates].map(([id, data]) => ({ id, data }))
-      await this.importSiteTemplates(fresh)
-      changed = true
+    for (let index = 0; index < plan.create.length; index++) {
+      const id = plan.create[index]!
+      const saved = this.dormant.get(id)
+      this.dormant.delete(id)
+      const image = new BotImage(
+        this,
+        byId.get(id)!,
+        saved && { ...saved, disabledColors: new Set(saved.disabledColors) },
+      )
+      this.images.push(image)
+      await image.updatePixels((p) => {
+        progress?.((index + p) / plan.create.length)
+      })
     }
+    this.templateSignature = list.map((template) => template.revision).join()
     if (changed) {
       this.widget.update()
       await save(this, true)
     }
+    return undefined
+  }
+
+  /** Coalesces bursts of site notifications into one reconciliation */
+  protected scheduleSync(delayMs = 250) {
+    clearTimeout(this.syncTimer)
+    this.syncTimer = setTimeout(() => {
+      void this.syncTemplates().then((error) => {
+        if (error && !this.drawing) this.widget.status = `❌ ${error}`
+      })
+    }, delayMs)
+  }
+
+  /** Read through a method so the check is not narrowed by what the run set earlier */
+  protected drawIsStale() {
+    return this.drawInvalidated
+  }
+
+  protected readonly onTemplatesChanged = () => {
+    if (!this.drawing) this.scheduleSync()
+    else if (this.drawnTemplatesChanged()) this.drawInvalidated = true
+  }
+
+  /** Whether a template the running draw works from was edited or removed */
+  protected drawnTemplatesChanged() {
+    try {
+      const byId = new Map(
+        this.templates!.list().map((template) => [template.id, template]),
+      )
+      return this.images.some((image) => {
+        const template = byId.get(image.wplaceId)
+        return template?.contentKey !== image.template.contentKey
+      })
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Follow wplace's template manager: its own change notifications, a light
+   * metadata check in case one is missed, and a look when the tab comes back.
+   * The bot lives as long as the page does, so none of this is ever removed
+   */
+  protected watchTemplates() {
+    setInterval(() => {
+      if (this.drawing || !this.templates) return
+      try {
+        const signature = this.templates
+          .list()
+          .map((template) => template.revision)
+          .join()
+        if (signature !== this.templateSignature) this.scheduleSync()
+      } catch {
+        // A failed read is retried by the next tick or the next notification
+      }
+    }, 5000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && !this.drawing)
+        this.scheduleSync(0)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    globalThis.addEventListener('focus', onVisible)
   }
 
   /**

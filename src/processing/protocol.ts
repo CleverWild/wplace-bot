@@ -8,13 +8,10 @@ import {
 
 export type WorkerPixelsRequest = {
   id: number
-  data: Uint8ClampedArray
-  nativeWidth: number
-  nativeHeight: number
+  pixels: Uint8Array
   width: number
   height: number
   unavailableColors: Set<number>
-  brightness: number
   colorMetric: ColorMetric
   drawColorsInOrder: boolean
   colors: number[]

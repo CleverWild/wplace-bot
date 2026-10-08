@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import { RegionOrder } from '../ordering'
+import { ImageStrategy, RegionOrder } from '../ordering'
 
 import { createImageSettings } from './model'
 
@@ -34,11 +34,11 @@ test('keys that are not settings are dropped', () => {
 
 test('undefined overrides keep the default', () => {
   const settings = createImageSettings({
-    opacity: undefined,
+    strategy: undefined,
     regionOrder: undefined,
-    lock: false,
+    disabled: true,
   })
-  expect(settings.opacity).toBe(50)
+  expect(settings.strategy).toBe(ImageStrategy.SPIRAL_TO_CENTER)
   expect(settings.regionOrder).toBe(RegionOrder.OFF)
-  expect(settings.height).toBeUndefined()
+  expect(settings.disabled).toBe(true)
 })

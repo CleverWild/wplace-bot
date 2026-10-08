@@ -44,6 +44,11 @@ new PerformanceObserver((list) => {
   }
 }).observe({ buffered: true, type: 'resource' })
 
+/** App chunk URLs the page has loaded so far */
+export function loadedChunkUrls() {
+  return [...chunkUrls]
+}
+
 let store: WplaceStore | undefined
 
 function isStore(value: unknown): value is WplaceStore {

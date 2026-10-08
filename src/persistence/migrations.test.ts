@@ -8,28 +8,31 @@ import { migrate, migrateImage } from './migrations'
 import { SAVE_VERSION, type SavedBot, type SavedImage } from './schema'
 
 const CURRENT_IMAGE: SavedImage = {
-  url: 'data:image/webp;base64,x',
-  width: 40,
-  height: 30,
-  brightness: 5,
-  colorMetric: 'ciede2000',
-  position: [1_078_206, 704_428],
+  wplaceId: 'abc',
   strategy: ImageStrategy.CONTRAST,
-  opacity: 70,
   drawTransparentPixels: true,
   drawColorsInOrder: false,
   colors: [3, 1],
   disabledColors: [1],
-  lock: true,
   disabled: true,
-  name: 'cat',
   unownedColorStrategy: UnownedColorStrategy.SUBSTITUTE,
-  wplaceId: 'abc',
-  siteDisabled: true,
   regionOrder: RegionOrder.LARGEST,
   fillDirection: FillDirection.EDGE_IN,
   outlineFirst: true,
-  version: SAVE_VERSION,
+}
+
+const OLD_IMAGE = {
+  url: 'data:image/webp;base64,x',
+  width: 40,
+  height: 30,
+  brightness: 5,
+  opacity: 70,
+  position: [1_078_206, 704_428],
+  lock: true,
+  name: 'cat',
+  siteDisabled: true,
+  ...CURRENT_IMAGE,
+  version: 10,
 }
 
 test('a current image passes through unchanged', () => {
@@ -49,78 +52,74 @@ test('a current save passes through unchanged', () => {
   expect(migrate(structuredClone(save))).toEqual(save)
 })
 
-test('an image from before version 3 keeps its pixels settings', () => {
-  const image = migrateImage({
-    pixels: { url: 'data:x', width: 12, brightness: -3 },
-    position: [5, 6],
-    opacity: 40,
-    drawTransparentPixels: true,
-    drawColorsInOrder: false,
-    lock: true,
-  })
-  expect(image).toMatchObject({
-    url: 'data:x',
-    width: 12,
-    brightness: -3,
-    colorMetric: 'lab',
-    position: [5, 6],
-    strategy: ImageStrategy.SPIRAL_TO_CENTER,
-    opacity: 40,
-    drawTransparentPixels: true,
-    drawColorsInOrder: false,
-    lock: true,
-    disabled: false,
-    siteDisabled: false,
-    name: 'Unnamed image',
-    unownedColorStrategy: UnownedColorStrategy.BUY,
-    regionOrder: RegionOrder.OFF,
-    fillDirection: FillDirection.SEED_OUT,
-    outlineFirst: false,
-    version: 6,
-  })
+test('an old image keeps its drawing settings and drops what the site owns', () => {
+  const image = migrateImage(structuredClone(OLD_IMAGE), true)
+  expect(image).toEqual(CURRENT_IMAGE)
 })
 
-test('version 3 hands a template visibility to siteDisabled', () => {
-  const template = migrateImage({
-    url: 'x',
-    wplaceId: 'id',
-    disabled: true,
-    version: 3,
+test('a version 10 save keeps linked images in order and counts the rest', () => {
+  const save = migrate({
+    version: 10,
+    images: [
+      { ...OLD_IMAGE, wplaceId: 'b', name: 'second' },
+      { ...OLD_IMAGE, wplaceId: undefined },
+      { ...OLD_IMAGE, wplaceId: '' },
+      { ...OLD_IMAGE, wplaceId: 'a' },
+      { ...OLD_IMAGE, wplaceId: 'b' },
+    ],
+    strategy: BotStrategy.ALL,
+    dropletStrategy: DropletStrategy.COLORS,
+    title: 't',
+    widgetOpen: true,
+    tileCountries: [],
   })
+  expect(save.version).toBe(SAVE_VERSION)
+  expect(save.images.map((image) => image.wplaceId)).toEqual(['b', 'a'])
+  expect(save.archivedImageCount).toBe(2)
+  expect(save.images[0]).toEqual({ ...CURRENT_IMAGE, wplaceId: 'b' })
+})
+
+test('a current save without a template id is rejected', () => {
+  expect(() =>
+    migrate({
+      version: SAVE_VERSION,
+      images: [{ ...CURRENT_IMAGE, wplaceId: undefined }],
+      strategy: BotStrategy.ALL,
+      dropletStrategy: DropletStrategy.COLORS,
+      title: 't',
+      widgetOpen: true,
+      tileCountries: [],
+    }),
+  ).toThrow()
+})
+
+test('an image from before version 3 was never linked to a template', () => {
+  expect(() =>
+    migrateImage({ pixels: { url: 'data:x', width: 12 } }, true),
+  ).toThrow('no Wplace ID')
+})
+
+test('version 3 hands a template visibility to the site', () => {
+  const template = migrateImage(
+    { url: 'x', wplaceId: 'id', disabled: true, version: 3 },
+    true,
+  )
   expect(template.disabled).toBe(false)
-  expect(template.siteDisabled).toBe(true)
-  const own = migrateImage({ url: 'x', disabled: true, version: 3 })
-  expect(own.disabled).toBe(true)
-  expect(own.siteDisabled).toBe(false)
 })
 
 test('version 4 has no blob fill', () => {
-  const image = migrateImage({ url: 'x', version: 4 })
+  const image = migrateImage({ wplaceId: 'id', version: 4 }, true)
   expect(image.regionOrder).toBe(RegionOrder.OFF)
   expect(image).not.toHaveProperty('floodFill')
 })
 
 test('version 5 moves the fill checkbox into the region order', () => {
-  expect(
-    migrateImage({ url: 'x', floodFill: true, regionOrder: 'NONE', version: 5 })
-      .regionOrder,
-  ).toBe(RegionOrder.IN_ORDER)
-  expect(
-    migrateImage({
-      url: 'x',
-      floodFill: true,
-      regionOrder: RegionOrder.LARGEST,
-      version: 5,
-    }).regionOrder,
-  ).toBe(RegionOrder.LARGEST)
-  expect(
-    migrateImage({
-      url: 'x',
-      floodFill: false,
-      regionOrder: RegionOrder.LARGEST,
-      version: 5,
-    }).regionOrder,
-  ).toBe(RegionOrder.OFF)
+  const at = (floodFill: boolean, regionOrder: string) =>
+    migrateImage({ wplaceId: 'id', floodFill, regionOrder, version: 5 }, true)
+      .regionOrder
+  expect(at(true, 'NONE')).toBe(RegionOrder.IN_ORDER)
+  expect(at(true, RegionOrder.LARGEST)).toBe(RegionOrder.LARGEST)
+  expect(at(false, RegionOrder.LARGEST)).toBe(RegionOrder.OFF)
 })
 
 test('a save from before version 3 gets a title and colors-only droplets', () => {
@@ -187,5 +186,5 @@ test('malformed data is rejected instead of cast', () => {
   expect(() => migrate(undefined)).toThrow()
   expect(() => migrate({ version: 8 })).toThrow()
   expect(() => migrateImage('image')).toThrow()
-  expect(() => migrateImage({ version: 6 })).toThrow()
+  expect(() => migrateImage({ version: 6 }, true)).toThrow()
 })
