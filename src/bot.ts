@@ -359,6 +359,12 @@ export class WPlaceBot {
           if (packs > 0 && (await this.buyChargePacks(packs)))
             return this.draw(submit, droplets)
         }
+        // The batch is staged through the palette, so it has to be on screen
+        if (charges > 0 && !(await this.waitForPalette()))
+          throw new WPlaceBotError(
+            "❌ wplace's color palette did not open, will try again",
+            this,
+          )
         const indexes = new Map<BotImage, number>()
 
         const drawTask = async (image: BotImage) => {
@@ -383,9 +389,12 @@ export class WPlaceBot {
             ]
 
           if (this.lastColor !== color) {
-            const $color = document.getElementById(
-              'color-' + color,
-            ) as HTMLButtonElement
+            const $color = document.getElementById('color-' + color)
+            if (!$color)
+              throw new WPlaceBotError(
+                `❌ No swatch for color ${color} on the page`,
+                this,
+              )
             // A click on the selected color makes wplace fly to a random unpainted pixel of it
             if ($color.getAttribute('aria-pressed') !== 'true') $color.click()
             this.lastColor = color
@@ -563,7 +572,8 @@ export class WPlaceBot {
    * invisible, and every purchase decision reads those two numbers.
    */
   protected submitPaint(queued: number): Promise<number> {
-    const PAINT_BUTTON = '.absolute.bottom-0  .btn.btn-lg.relative.btn-primary'
+    const PAINT_BUTTON =
+      '[class~="@container/paint-button"] > .btn.btn-lg.relative.btn-primary'
     const $paint = document.querySelector<HTMLButtonElement>(PAINT_BUTTON)
     // A disabled button means wplace staged none of the queue, and clicking it
     // would only buy a 15-second timeout
@@ -873,7 +883,7 @@ export class WPlaceBot {
    * STORE_BUTTON and PACK_LABEL against the live page first.
    */
   public async buyChargePacks(packs: number): Promise<boolean> {
-    const STORE_BUTTON = 'button[title="Store"]'
+    const STORE_BUTTON = 'button[aria-label="Store"], button[title="Store"]'
     const PACK_LABEL = '+30 Paint Charges'
     await this.closeAll()
     const $store = document.querySelector<HTMLButtonElement>(STORE_BUTTON)
@@ -890,7 +900,7 @@ export class WPlaceBot {
     for (let attempt = 0; attempt < 10 && !$card; attempt++) {
       await wait(200)
       $card =
-        [...document.querySelectorAll('p')].find(
+        [...document.querySelectorAll('h4, p')].find(
           (p) => p.textContent.trim() === PACK_LABEL,
         )?.parentElement ?? null
     }
@@ -960,6 +970,19 @@ export class WPlaceBot {
     }
   }
 
+  /**
+   * wplace ignores "Paint" while its own bar shows less than one charge, which
+   * is the case right after a paint, so the palette is asked for until it shows
+   */
+  protected async waitForPalette() {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (document.getElementById('color-1')) return true
+      await this.openColors()
+      await wait(500)
+    }
+    return document.getElementById('color-1') !== null
+  }
+
   /** Closes all popups */
   public async closeAll() {
     for (const button of document.querySelectorAll('button')) {
@@ -971,6 +994,15 @@ export class WPlaceBot {
         button.click()
         await wait(1)
       }
+    }
+    // The store is a native <dialog> whose close button is none of the above.
+    // Only wplace's `modal`: our own classes are prefixed, so settings stay open
+    for (const dialog of document.querySelectorAll<HTMLDialogElement>(
+      'dialog.modal[open]',
+    )) {
+      if (typeof dialog.requestClose === 'function') dialog.requestClose()
+      else dialog.close()
+      await wait(1)
     }
   }
 

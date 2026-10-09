@@ -3365,6 +3365,8 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         if (packs > 0 && await this.buyChargePacks(packs))
           return this.draw(submit, droplets);
       }
+      if (charges > 0 && !await this.waitForPalette())
+        throw new WPlaceBotError("❌ wplace's color palette did not open, will try again", this);
       const indexes = new Map;
       const drawTask = async (image) => {
         if (this.drawInvalidated) {
@@ -3381,6 +3383,8 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         const color = image.pixels[(worldPosition.globalY - image.position.globalY) * image.width + (worldPosition.globalX - image.position.globalX)];
         if (this.lastColor !== color) {
           const $color = document.getElementById("color-" + color);
+          if (!$color)
+            throw new WPlaceBotError(`❌ No swatch for color ${color} on the page`, this);
           if ($color.getAttribute("aria-pressed") !== "true")
             $color.click();
           this.lastColor = color;
@@ -3494,7 +3498,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
     });
   }
   submitPaint(queued) {
-    const PAINT_BUTTON = ".absolute.bottom-0  .btn.btn-lg.relative.btn-primary";
+    const PAINT_BUTTON = '[class~="@container/paint-button"] > .btn.btn-lg.relative.btn-primary';
     const $paint = document.querySelector(PAINT_BUTTON);
     if (!$paint || $paint.disabled) {
       console.warn(`wbot: no usable ${PAINT_BUTTON}, nothing was painted`);
@@ -3706,7 +3710,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         this.unavailableColors.add(color);
   }
   async buyChargePacks(packs) {
-    const STORE_BUTTON = 'button[title="Store"]';
+    const STORE_BUTTON = 'button[aria-label="Store"], button[title="Store"]';
     const PACK_LABEL = "+30 Paint Charges";
     await this.closeAll();
     const $store = document.querySelector(STORE_BUTTON);
@@ -3718,7 +3722,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
     let $card = null;
     for (let attempt = 0;attempt < 10 && !$card; attempt++) {
       await wait(200);
-      $card = [...document.querySelectorAll("p")].find((p) => p.textContent.trim() === PACK_LABEL)?.parentElement ?? null;
+      $card = [...document.querySelectorAll("h4, p")].find((p) => p.textContent.trim() === PACK_LABEL)?.parentElement ?? null;
     }
     if (!$card) {
       console.warn(`wbot: no "${PACK_LABEL}" card in the store`);
@@ -3761,12 +3765,28 @@ Developer will try to fix your save. Be vary that github issues are public, and 
       await wait(1);
     }
   }
+  async waitForPalette() {
+    for (let attempt = 0;attempt < 20; attempt++) {
+      if (document.getElementById("color-1"))
+        return true;
+      await this.openColors();
+      await wait(500);
+    }
+    return document.getElementById("color-1") !== null;
+  }
   async closeAll() {
     for (const button of document.querySelectorAll("button")) {
       if (button.innerHTML === "✕" || button.innerHTML === `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor" class="size-4"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"></path></svg><!---->`) {
         button.click();
         await wait(1);
       }
+    }
+    for (const dialog of document.querySelectorAll("dialog.modal[open]")) {
+      if (typeof dialog.requestClose === "function")
+        dialog.requestClose();
+      else
+        dialog.close();
+      await wait(1);
     }
   }
   waitForElement(selector) {
