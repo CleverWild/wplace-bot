@@ -18,7 +18,7 @@ let loadFailure: Error | undefined
 export async function loadSave(): Promise<LoadedBot | undefined> {
   try {
     let raw = await idbGet<unknown>(SAVE_KEY)
-    let legacyKey: string | undefined
+    let imported = false
     if (raw === undefined) {
       for (let index = 0; index < localStorage.length; index++) {
         const key = localStorage.key(index)
@@ -26,7 +26,7 @@ export async function loadSave(): Promise<LoadedBot | undefined> {
           const json = localStorage.getItem(key)
           if (json !== null) {
             raw = JSON.parse(json) as unknown
-            legacyKey = key
+            imported = true
             break
           }
         }
@@ -41,8 +41,7 @@ export async function loadSave(): Promise<LoadedBot | undefined> {
     if (typeof version !== 'number' || version < SAVE_VERSION) {
       const { archivedImageCount: _, ...persisted } = loaded
       await archiveAndMigrateSave(raw, persisted)
-    } else if (legacyKey) await idbSet(SAVE_KEY, loaded)
-    if (legacyKey) localStorage.removeItem(legacyKey)
+    } else if (imported) await idbSet(SAVE_KEY, loaded)
     loadFailure = undefined
     return loaded
   } catch (error) {

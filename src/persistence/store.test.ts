@@ -55,7 +55,7 @@ function installDatabase(abort = false) {
     configurable: true,
     value: {
       open: (name: string, version: number) => {
-        expect(name).toBe('wbot')
+        expect(name).toBe('wbot-cleverwild')
         expect(version).toBe(1)
         state.opens++
         const request = {
@@ -66,7 +66,7 @@ function installDatabase(abort = false) {
         return request
       },
       deleteDatabase: (name: string) => {
-        expect(name).toBe('wbot')
+        expect(name).toBe('wbot-cleverwild')
         const request = { onsuccess: undefined as (() => void) | undefined }
         queueMicrotask(() => {
           records.clear()

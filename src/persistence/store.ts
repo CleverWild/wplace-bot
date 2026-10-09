@@ -1,4 +1,4 @@
-const DB_NAME = 'wbot'
+const DB_NAME = 'wbot-cleverwild'
 const STORE_NAME = 'saves'
 const DB_VERSION = 1
 export const SAVE_KEY = 'wbot'

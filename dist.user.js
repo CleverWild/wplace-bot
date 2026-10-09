@@ -725,7 +725,7 @@ class SaveQueue {
 }
 
 // src/persistence/store.ts
-var DB_NAME = "wbot";
+var DB_NAME = "wbot-cleverwild";
 var STORE_NAME = "saves";
 var DB_VERSION = 1;
 var SAVE_KEY = "wbot";
@@ -836,7 +836,7 @@ var loadFailure;
 async function loadSave() {
   try {
     let raw = await idbGet(SAVE_KEY);
-    let legacyKey;
+    let imported = false;
     if (raw === undefined) {
       for (let index = 0;index < localStorage.length; index++) {
         const key = localStorage.key(index);
@@ -844,7 +844,7 @@ async function loadSave() {
           const json = localStorage.getItem(key);
           if (json !== null) {
             raw = JSON.parse(json);
-            legacyKey = key;
+            imported = true;
             break;
           }
         }
@@ -859,10 +859,8 @@ async function loadSave() {
     if (typeof version !== "number" || version < SAVE_VERSION) {
       const { archivedImageCount: _, ...persisted } = loaded;
       await archiveAndMigrateSave(raw, persisted);
-    } else if (legacyKey)
+    } else if (imported)
       await idbSet(SAVE_KEY, loaded);
-    if (legacyKey)
-      localStorage.removeItem(legacyKey);
     loadFailure = undefined;
     return loaded;
   } catch (error) {
