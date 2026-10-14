@@ -433,6 +433,10 @@ var FillDirection;
 function sortColorsByAmount(colors, amounts, ascending) {
   return [...colors].sort((a, b) => ascending ? (amounts.get(a) ?? 0) - (amounts.get(b) ?? 0) : (amounts.get(b) ?? 0) - (amounts.get(a) ?? 0));
 }
+var NEIGHBOUR_X = new Int8Array([-1, 0, 1, -1, 1, -1, 0, 1]);
+var NEIGHBOUR_Y = new Int8Array([-1, -1, -1, 0, 0, 1, 1, 1]);
+var NEIGHBOUR_WEIGHT = Float64Array.from(NEIGHBOUR_X, (dx, index) => 1 / Math.hypot(dx, NEIGHBOUR_Y[index]));
+var NEIGHBOUR_WEIGHT_SUM = NEIGHBOUR_WEIGHT.reduce((a, b) => a + b, 0);
 
 // src/image/model.ts
 var UnownedColorStrategy;
@@ -1340,6 +1344,10 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
     }
     return result;
   }
+  var NEIGHBOUR_X = new Int8Array([-1, 0, 1, -1, 1, -1, 0, 1]);
+  var NEIGHBOUR_Y = new Int8Array([-1, -1, -1, 0, 0, 1, 1, 1]);
+  var NEIGHBOUR_WEIGHT = Float64Array.from(NEIGHBOUR_X, (dx, index) => 1 / Math.hypot(dx, NEIGHBOUR_Y[index]));
+  var NEIGHBOUR_WEIGHT_SUM = NEIGHBOUR_WEIGHT.reduce((a, b) => a + b, 0);
   function contrastOrder(taskPixels, colorAt, mapAt, width, height, distance) {
     const SIZE = width * height;
     const LENGTH = taskPixels.length;
@@ -1361,43 +1369,32 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       rank[taskPixels[index]] = index;
     }
     function gain(pixel) {
-      const row = colorAt[pixel] * 64;
+      const target = colorAt[pixel];
+      const row = target * 64;
       let score = distance[row + canvas[pixel]];
       const x = pixel % width;
       const y = pixel / width | 0;
       let sum = 0;
-      let neighbours = 0;
+      let present = 0;
       let done = 0;
-      if (y > 0) {
-        const next = pixel - width;
-        sum += distance[row + canvas[next]];
-        neighbours++;
-        done += painted[next];
+      for (let index = 0;index < NEIGHBOUR_X.length; index++) {
+        const nx = x + NEIGHBOUR_X[index];
+        const ny = y + NEIGHBOUR_Y[index];
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height)
+          continue;
+        const next = ny * width + nx;
+        const weight = NEIGHBOUR_WEIGHT[index];
+        sum += weight * distance[row + canvas[next]];
+        present += weight;
+        if (painted[next] === 1 || canvas[next] === target)
+          done += weight;
       }
-      if (x > 0) {
-        const next = pixel - 1;
-        sum += distance[row + canvas[next]];
-        neighbours++;
-        done += painted[next];
-      }
-      if (x < width - 1) {
-        const next = pixel + 1;
-        sum += distance[row + canvas[next]];
-        neighbours++;
-        done += painted[next];
-      }
-      if (y < height - 1) {
-        const next = pixel + width;
-        sum += distance[row + canvas[next]];
-        neighbours++;
-        done += painted[next];
-      }
-      if (neighbours !== 0)
-        score += sum / neighbours;
-      return score + adhesion * done / 4;
+      if (present !== 0)
+        score += sum / present;
+      return score + adhesion * done / NEIGHBOUR_WEIGHT_SUM;
     }
     const current = new Float64Array(SIZE);
-    const capacity = LENGTH * 5 + 8;
+    const capacity = LENGTH * 9 + 8;
     const heapItem = new Uint32Array(capacity);
     const heapScore = new Float64Array(capacity);
     let heapSize = 0;
@@ -1463,14 +1460,12 @@ var worker = new Worker(URL.createObjectURL(new Blob([`(() => {
       painted[pixel] = 1;
       const x = pixel % width;
       const y = pixel / width | 0;
-      if (y > 0)
-        rescore(pixel - width);
-      if (x > 0)
-        rescore(pixel - 1);
-      if (x < width - 1)
-        rescore(pixel + 1);
-      if (y < height - 1)
-        rescore(pixel + width);
+      for (let index = 0;index < NEIGHBOUR_X.length; index++) {
+        const nx = x + NEIGHBOUR_X[index];
+        const ny = y + NEIGHBOUR_Y[index];
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height)
+          rescore(ny * width + nx);
+      }
     }
     function rescore(pixel) {
       if (isTask[pixel] === 0 || painted[pixel] === 1)

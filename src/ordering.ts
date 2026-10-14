@@ -419,12 +419,24 @@ export function sortColorsByAmount(
   )
 }
 
+const NEIGHBOUR_X = new Int8Array([-1, 0, 1, -1, 1, -1, 0, 1])
+const NEIGHBOUR_Y = new Int8Array([-1, -1, -1, 0, 0, 1, 1, 1])
+/** Inverse distance: a pixel across a corner counts for less than across an edge */
+const NEIGHBOUR_WEIGHT = Float64Array.from(
+  NEIGHBOUR_X,
+  (dx, index) => 1 / Math.hypot(dx, NEIGHBOUR_Y[index]!),
+)
+const NEIGHBOUR_WEIGHT_SUM = NEIGHBOUR_WEIGHT.reduce((a, b) => a + b, 0)
+
 /**
  * Orders tasks by how much painting each one changes the picture right now:
  * how far the target color is from what lies under it, how far it is from what
  * surrounds it, and a bonus for touching what we have painted already so the
- * brush grows instead of scattering. Painting a pixel re-scores its four
- * neighbours, so this is a greedy walk and not a single sort.
+ * brush grows instead of scattering. A neighbour counts as
+ * touched if we painted it or if it already shows this pixel's color,
+ * whether or not it is a task. All eight neighbours count, the ones
+ * across a corner for less. Painting a pixel re-scores them, so this is a
+ * greedy walk and not a single sort.
  *
  * `distance` is a 64x64 table of color distances. Row and column zero are the
  * caller's business: blank canvas has no color of its own, so what it is worth
@@ -447,14 +459,17 @@ export function contrastOrder(
   for (let index = 0; index < distance.length; index++)
     if (distance[index]! > maxDistance) maxDistance = distance[index]!
   /**
-   * Painting a neighbour of the same color costs this pixel up to a quarter of
-   * `maxDistance` in contrast, so without a bigger bonus than that the brush
-   * pays to move away. Measured on a 218x292 picture, the average hop between
-   * consecutive pixels falls from 80 to 6 as this goes from a quarter to twice
-   * `maxDistance`, while the contrast still front-loaded into the first tenth
-   * only drops from 1.75x to 1.58x the average. Four times costs far more of
-   * that (1.32x) for another 4 pixels of travel. Turn it down for a picture
-   * that should emerge everywhere at once, up for one long unbroken stroke.
+   * Painting a neighbour of the same color costs this pixel up to a seventh of
+   * `maxDistance` in contrast across an edge, a tenth across a corner, so
+   * without a bigger bonus than that the brush pays to move away. The figures
+   * below were measured with four equal neighbours, where the cost was a
+   * quarter; the trend holds, the numbers do not. On a 218x292 picture the
+   * average hop between consecutive pixels falls from 80 to 6 as this goes
+   * from a quarter to twice `maxDistance`, while the contrast still
+   * front-loaded into the first tenth only drops from 1.75x to 1.58x the
+   * average. Four times costs far more of that (1.32x) for another 4 pixels of
+   * travel. Turn it down for a picture that should emerge everywhere at once,
+   * up for one long unbroken stroke.
    */
   const adhesion = maxDistance * 2
 
@@ -470,46 +485,33 @@ export function contrastOrder(
   }
 
   function gain(pixel: number) {
-    const row = colorAt[pixel]! * 64
+    const target = colorAt[pixel]!
+    const row = target * 64
     let score = distance[row + canvas[pixel]!]!
     const x = pixel % width
     const y = (pixel / width) | 0
     let sum = 0
-    let neighbours = 0
+    let present = 0
     let done = 0
-    if (y > 0) {
-      const next = pixel - width
-      sum += distance[row + canvas[next]!]!
-      neighbours++
-      done += painted[next]!
+    for (let index = 0; index < NEIGHBOUR_X.length; index++) {
+      const nx = x + NEIGHBOUR_X[index]!
+      const ny = y + NEIGHBOUR_Y[index]!
+      if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
+      const next = ny * width + nx
+      const weight = NEIGHBOUR_WEIGHT[index]!
+      sum += weight * distance[row + canvas[next]!]!
+      present += weight
+      if (painted[next] === 1 || canvas[next] === target) done += weight
     }
-    if (x > 0) {
-      const next = pixel - 1
-      sum += distance[row + canvas[next]!]!
-      neighbours++
-      done += painted[next]!
-    }
-    if (x < width - 1) {
-      const next = pixel + 1
-      sum += distance[row + canvas[next]!]!
-      neighbours++
-      done += painted[next]!
-    }
-    if (y < height - 1) {
-      const next = pixel + width
-      sum += distance[row + canvas[next]!]!
-      neighbours++
-      done += painted[next]!
-    }
-    if (neighbours !== 0) score += sum / neighbours
-    // Out of four even at the border, so an edge pixel is not flattered
-    return score + (adhesion * done) / 4
+    if (present !== 0) score += sum / present
+    // Out of all of them even at the border, so an edge pixel is not flattered
+    return score + (adhesion * done) / NEIGHBOUR_WEIGHT_SUM
   }
 
   // A pixel is re-scored whenever a neighbour is painted, so the heap carries
   // stale entries; `current` says which score is the live one
   const current = new Float64Array(SIZE)
-  const capacity = LENGTH * 5 + 8
+  const capacity = LENGTH * 9 + 8
   const heapItem = new Uint32Array(capacity)
   const heapScore = new Float64Array(capacity)
   let heapSize = 0
@@ -606,10 +608,12 @@ export function contrastOrder(
     painted[pixel] = 1
     const x = pixel % width
     const y = (pixel / width) | 0
-    if (y > 0) rescore(pixel - width)
-    if (x > 0) rescore(pixel - 1)
-    if (x < width - 1) rescore(pixel + 1)
-    if (y < height - 1) rescore(pixel + width)
+    for (let index = 0; index < NEIGHBOUR_X.length; index++) {
+      const nx = x + NEIGHBOUR_X[index]!
+      const ny = y + NEIGHBOUR_Y[index]!
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height)
+        rescore(ny * width + nx)
+    }
   }
 
   function rescore(pixel: number) {

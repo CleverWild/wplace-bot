@@ -327,8 +327,9 @@ test('paints what changes the picture most, first', () => {
 test('grows from what it has painted instead of jumping', () => {
   const { colorAt, width, height } = grid([[2, 2, 1, 2, 2]])
   const map = new Uint8Array([1, 1, 1, 1, 1])
+  // The one is already right, so it is no task
   const order = contrastOrder(
-    allTasks(width, height),
+    new Uint32Array([0, 1, 3, 4]),
     colorAt,
     map,
     width,
@@ -339,6 +340,65 @@ test('grows from what it has painted instead of jumping', () => {
   expect(order[0]).toBe(0)
   // Its neighbour now carries the adhesion bonus and beats the far-away pair
   expect(order[1]).toBe(1)
+})
+
+test('grows from a painted pixel that touches only at the corner', () => {
+  // Task pixels are 0, 3 and 5; pixel 5 touches pixel 0 only at the corner
+  const { colorAt, width, height } = grid([
+    [2, 1, 1, 2],
+    [1, 2, 1, 1],
+  ])
+  const map = new Uint8Array(width * height).fill(1)
+  const order = contrastOrder(
+    new Uint32Array([0, 3, 5]),
+    colorAt,
+    map,
+    width,
+    height,
+    distances(),
+  )
+  expect([...order]).toEqual([0, 5, 3])
+})
+
+test('weighs a different color across a corner less than one across an edge', () => {
+  const width = 7
+  const height = 3
+  const colorAt = new Uint8Array(width * height).fill(2)
+  const map = new Uint8Array(width * height).fill(3)
+  const across = 1 * width + 1
+  const corner = 1 * width + 5
+  map[across] = 1
+  map[corner] = 1
+  map[0 * width + 1] = 4 // above `across`
+  map[0 * width + 4] = 4 // up and to the left of `corner`
+  // The corner pixel comes first in the sweep, so only the weights can reorder them
+  const order = contrastOrder(
+    new Uint32Array([corner, across]),
+    colorAt,
+    map,
+    width,
+    height,
+    distances(),
+  )
+  expect([...order]).toEqual([across, corner])
+})
+
+test('hands out every pixel of a large picture exactly once', () => {
+  const width = 40
+  const height = 40
+  const colorAt = new Uint8Array(width * height)
+  for (let index = 0; index < colorAt.length; index++)
+    colorAt[index] = 1 + ((index * 7 + ((index / width) | 0) * 3) % 4)
+  const map = new Uint8Array(width * height).fill(1)
+  const order = contrastOrder(
+    allTasks(width, height),
+    colorAt,
+    map,
+    width,
+    height,
+    distances(),
+  )
+  expect(new Set(order).size).toBe(width * height)
 })
 
 test('keeps every task exactly once and touches nothing else', () => {
@@ -367,4 +427,20 @@ test('counts neighbours that are not tasks as part of the surroundings', () => {
     distances(),
   )
   expect([...order]).toEqual([1])
+})
+
+test('grows from a pixel that already has its color, whether or not it is a task', () => {
+  // Pixels 0 and 3 are tasks, equally far from their color. Pixel 1 already
+  // shows color 3 and is no task, so it is the only thing worth growing from
+  const { colorAt, width, height } = grid([[3, 3, 1, 3]])
+  const map = new Uint8Array([1, 3, 1, 1])
+  const order = contrastOrder(
+    new Uint32Array([0, 3]),
+    colorAt,
+    map,
+    width,
+    height,
+    distances(),
+  )
+  expect([...order]).toEqual([0, 3])
 })
