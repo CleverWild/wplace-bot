@@ -8,6 +8,7 @@ import {
   deltaE2000,
   deltaE94,
   metricFunction,
+  ownsColor,
   rgbToLab,
 } from './colors'
 
@@ -134,4 +135,29 @@ test('renders palette colors as their own sRGB values', () => {
   expect(colorToCSS(1)).toBe('#000000')
   expect(colorToCSS(2)).toBe('#3c3c3c')
   expect(colorToCSS(5)).toBe('#ffffff')
+})
+
+test('the free colors are owned whatever /me says', () => {
+  for (const color of [1, 16, 31]) {
+    expect(ownsColor(0, color)).toBe(true)
+    expect(ownsColor(undefined, color)).toBe(true)
+  }
+})
+
+test('a premium color is owned when its bit in extraColorsBitmap is set', () => {
+  expect(ownsColor(1, 32)).toBe(true)
+  expect(ownsColor(1, 33)).toBe(false)
+  expect(ownsColor(0b100, 34)).toBe(true)
+  expect(ownsColor(0, 40)).toBe(false)
+})
+
+test('reads the top premium color out of a signed 32-bit bitmap', () => {
+  // /me sends the bitmap as a signed int32, so color 63 is the sign bit
+  expect(ownsColor(-(2 ** 31), 63)).toBe(true)
+  expect(ownsColor(-(2 ** 31), 62)).toBe(false)
+  expect(ownsColor(-1, 63)).toBe(true)
+})
+
+test('owns no premium color without a bitmap', () => {
+  expect(ownsColor(undefined, 32)).toBe(false)
 })

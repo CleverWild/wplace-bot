@@ -74,6 +74,105 @@ function wait(time) {
 }
 // node_modules/@softsky/utils/dist/signals.js
 var effectsMap = new WeakMap;
+// src/colors.ts
+function srgbNonlinearTransformInv(c) {
+  return c > 0.04045 ? ((c + 0.055) / 1.055) ** 2.4 : c / 12.92;
+}
+function rgbToLab(r, g, b) {
+  const lr = srgbNonlinearTransformInv(r / 255);
+  const lg = srgbNonlinearTransformInv(g / 255);
+  const lb = srgbNonlinearTransformInv(b / 255);
+  const f = (t) => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+  const fx = f((lr * 0.4124 + lg * 0.3576 + lb * 0.1805) / 0.95047);
+  const fy = f(lr * 0.2126 + lg * 0.7152 + lb * 0.0722);
+  const fz = f((lr * 0.0193 + lg * 0.1192 + lb * 0.9505) / 1.08883);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+var COLORS_RGB = [
+  NaN,
+  0,
+  3947580,
+  7895160,
+  13816530,
+  16777215,
+  6291480,
+  15539236,
+  16744231,
+  16165385,
+  16375099,
+  16775868,
+  964968,
+  1304187,
+  8912734,
+  819566,
+  1093286,
+  1302974,
+  2642078,
+  4232164,
+  6354930,
+  7033078,
+  10072571,
+  7867545,
+  11155641,
+  14721017,
+  13303930,
+  15474560,
+  15961513,
+  6833716,
+  9791530,
+  16298615,
+  11184810,
+  10817054,
+  16416882,
+  14965786,
+  14071188,
+  10257457,
+  12954929,
+  15258719,
+  4877114,
+  5936202,
+  8701299,
+  1014175,
+  12319474,
+  8243199,
+  5059000,
+  4866692,
+  8024516,
+  11906801,
+  14394467,
+  13729873,
+  16762277,
+  10179145,
+  13729912,
+  16430756,
+  8086354,
+  10257515,
+  3356993,
+  7173517,
+  11778513,
+  7169087,
+  9735275,
+  13485470
+];
+var COLORS_RGB_TRIPLES = COLORS_RGB.map((rgb) => [rgb >> 16, rgb >> 8 & 255, rgb & 255]);
+var COLORS = COLORS_RGB.map((rgb, index) => index === 0 ? [Number.NaN, Number.NaN, Number.NaN] : rgbToLab(rgb >> 16, rgb >> 8 & 255, rgb & 255));
+var COLORS_RGB_MAP = new Map;
+for (let index = 0;index < COLORS_RGB.length; index++)
+  COLORS_RGB_MAP.set(COLORS_RGB[index], index);
+function colorToCSS(colorId) {
+  if (colorId === 0)
+    return "transparent";
+  return "#" + COLORS_RGB[colorId].toString(16).padStart(6, "0");
+}
+var FIRST_PREMIUM_COLOR = 32;
+function ownsColor(extraColorsBitmap, color) {
+  if (color < FIRST_PREMIUM_COLOR)
+    return true;
+  if (extraColorsBitmap === undefined)
+    return false;
+  return (extraColorsBitmap >>> color - FIRST_PREMIUM_COLOR & 1) === 1;
+}
+
 // src/drawing/policy.ts
 var BotStrategy;
 ((BotStrategy) => {
@@ -229,97 +328,6 @@ class Base2 {
       target.removeEventListener(type, listener);
     });
   }
-}
-
-// src/colors.ts
-function srgbNonlinearTransformInv(c) {
-  return c > 0.04045 ? ((c + 0.055) / 1.055) ** 2.4 : c / 12.92;
-}
-function rgbToLab(r, g, b) {
-  const lr = srgbNonlinearTransformInv(r / 255);
-  const lg = srgbNonlinearTransformInv(g / 255);
-  const lb = srgbNonlinearTransformInv(b / 255);
-  const f = (t) => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
-  const fx = f((lr * 0.4124 + lg * 0.3576 + lb * 0.1805) / 0.95047);
-  const fy = f(lr * 0.2126 + lg * 0.7152 + lb * 0.0722);
-  const fz = f((lr * 0.0193 + lg * 0.1192 + lb * 0.9505) / 1.08883);
-  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
-}
-var COLORS_RGB = [
-  NaN,
-  0,
-  3947580,
-  7895160,
-  13816530,
-  16777215,
-  6291480,
-  15539236,
-  16744231,
-  16165385,
-  16375099,
-  16775868,
-  964968,
-  1304187,
-  8912734,
-  819566,
-  1093286,
-  1302974,
-  2642078,
-  4232164,
-  6354930,
-  7033078,
-  10072571,
-  7867545,
-  11155641,
-  14721017,
-  13303930,
-  15474560,
-  15961513,
-  6833716,
-  9791530,
-  16298615,
-  11184810,
-  10817054,
-  16416882,
-  14965786,
-  14071188,
-  10257457,
-  12954929,
-  15258719,
-  4877114,
-  5936202,
-  8701299,
-  1014175,
-  12319474,
-  8243199,
-  5059000,
-  4866692,
-  8024516,
-  11906801,
-  14394467,
-  13729873,
-  16762277,
-  10179145,
-  13729912,
-  16430756,
-  8086354,
-  10257515,
-  3356993,
-  7173517,
-  11778513,
-  7169087,
-  9735275,
-  13485470
-];
-var COLORS_RGB_TRIPLES = COLORS_RGB.map((rgb) => [rgb >> 16, rgb >> 8 & 255, rgb & 255]);
-var COLORS = COLORS_RGB.map((rgb, index) => index === 0 ? [Number.NaN, Number.NaN, Number.NaN] : rgbToLab(rgb >> 16, rgb >> 8 & 255, rgb & 255));
-var COLORS_RGB_MAP = new Map;
-for (let index = 0;index < COLORS_RGB.length; index++)
-  COLORS_RGB_MAP.set(COLORS_RGB[index], index);
-function colorToCSS(colorId) {
-  if (colorId === 0)
-    return "transparent";
-  return "#" + COLORS_RGB[colorId].toString(16).padStart(6, "0");
 }
 
 // src/image/controller.ts
@@ -3327,11 +3335,6 @@ Developer will try to fix your save. Be vary that github issues are public, and 
               progress(index * batchSize + p * batchSize);
             });
         }),
-        fetch("https://backend.wplace.live/me", {
-          credentials: "include"
-        }).then((x) => x.json()).then((x) => {
-          this.me = x;
-        }),
         this.fetchTileCountries(this.images)
       ]));
       const initialCharges = Math.floor(this.me.charges.count);
@@ -3377,7 +3380,9 @@ Developer will try to fix your save. Be vary that github issues are public, and 
         const worldPosition = new WorldPosition(this, image.tasks[dIndex], image.tasks[dIndex + 1]);
         const color = image.pixels[(worldPosition.globalY - image.position.globalY) * image.width + (worldPosition.globalX - image.position.globalX)];
         if (this.lastColor !== color) {
-          document.getElementById("color-" + color).click();
+          const $color = document.getElementById("color-" + color);
+          if ($color.getAttribute("aria-pressed") !== "true")
+            $color.click();
           this.lastColor = color;
         }
         const halfPixel = worldPosition.pixelSize / 2;
@@ -3687,12 +3692,18 @@ Developer will try to fix your save. Be vary that github issues are public, and 
     }
     return [...amounts.entries()].sort((a, b) => b[1] - a[1]).map(([color]) => color);
   }
+  async refreshMe() {
+    this.me = await fetch("https://backend.wplace.live/me", {
+      credentials: "include"
+    }).then((x) => x.json());
+  }
   async updateColorsData() {
     await this.openColors();
+    await this.refreshMe();
     this.unavailableColors.clear();
-    for (const $button of document.querySelectorAll("button.btn.relative.w-full"))
-      if ($button.children.length !== 0)
-        this.unavailableColors.add(Math.abs(Number.parseInt($button.id.slice(6))));
+    for (let color = 1;color < 64; color++)
+      if (!ownsColor(this.me.extraColorsBitmap, color))
+        this.unavailableColors.add(color);
   }
   async buyChargePacks(packs) {
     const STORE_BUTTON = 'button[title="Store"]';

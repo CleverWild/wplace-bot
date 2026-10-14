@@ -1,5 +1,6 @@
 import { wait } from '@softsky/utils'
 
+import { ownsColor } from './colors'
 import { BotStrategy, DropletStrategy } from './drawing/policy'
 import { WPlaceBotError } from './errors'
 import {
@@ -299,13 +300,6 @@ export class WPlaceBot {
                   progress(index * batchSize + p * batchSize)
                 })
             }),
-            fetch('https://backend.wplace.live/me', {
-              credentials: 'include',
-            })
-              .then((x) => x.json())
-              .then((x) => {
-                this.me = x as Me
-              }),
             this.fetchTileCountries(this.images),
           ]),
         )
@@ -389,9 +383,11 @@ export class WPlaceBot {
             ]
 
           if (this.lastColor !== color) {
-            ;(
-              document.getElementById('color-' + color) as HTMLButtonElement
-            ).click()
+            const $color = document.getElementById(
+              'color-' + color,
+            ) as HTMLButtonElement
+            // A click on the selected color makes wplace fly to a random unpainted pixel of it
+            if ($color.getAttribute('aria-pressed') !== 'true') $color.click()
             this.lastColor = color
           }
           const halfPixel = worldPosition.pixelSize / 2
@@ -847,17 +843,24 @@ export class WPlaceBot {
       .map(([color]) => color)
   }
 
-  /** Read colors */
+  /** Fresh `/me`, so a color bought a moment ago already counts as owned */
+  protected async refreshMe() {
+    this.me = (await fetch('https://backend.wplace.live/me', {
+      credentials: 'include',
+    }).then((x) => x.json())) as Me
+  }
+
+  /**
+   * Which colors the account owns comes from `/me`, not from the swatches: they
+   * all carry a "left" counter now, so a child element no longer means locked
+   */
   public async updateColorsData() {
     await this.openColors()
+    await this.refreshMe()
     this.unavailableColors.clear()
-    for (const $button of document.querySelectorAll<HTMLButtonElement>(
-      'button.btn.relative.w-full',
-    ))
-      if ($button.children.length !== 0)
-        this.unavailableColors.add(
-          Math.abs(Number.parseInt($button.id.slice(6))),
-        )
+    for (let color = 1; color < 64; color++)
+      if (!ownsColor(this.me!.extraColorsBitmap, color))
+        this.unavailableColors.add(color)
   }
 
   /**

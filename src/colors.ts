@@ -260,3 +260,15 @@ export function colorToCSS(colorId: number) {
   // a/b +-128 mean nothing to CSS's oklab(), which clamps them to primaries
   return '#' + COLORS_RGB[colorId]!.toString(16).padStart(6, '0')
 }
+
+/** Colors 1..31 are free, 32..63 are bought and kept as bits of `/me`'s `extraColorsBitmap` */
+const FIRST_PREMIUM_COLOR = 32
+
+export function ownsColor(
+  extraColorsBitmap: number | undefined,
+  color: number,
+) {
+  if (color < FIRST_PREMIUM_COLOR) return true
+  if (extraColorsBitmap === undefined) return false
+  return ((extraColorsBitmap >>> (color - FIRST_PREMIUM_COLOR)) & 1) === 1
+}
