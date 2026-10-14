@@ -1812,6 +1812,13 @@ function fromViewportPosition(map, point) {
     globalY: latitudeToWorld(position.lat)
   };
 }
+function panToCentral(point, rect, share) {
+  const dx = point.x - (rect.left + rect.width / 2);
+  const dy = point.y - (rect.top + rect.height / 2);
+  if (Math.abs(dx) <= rect.width * share / 2 && Math.abs(dy) <= rect.height * share / 2)
+    return;
+  return { x: dx, y: dy };
+}
 
 // src/world-position.ts
 class WorldPosition {
@@ -3206,6 +3213,8 @@ class Widget extends Base2 {
 }
 
 // src/bot.ts
+var FOLLOW_CENTRAL_SHARE = 0.5;
+
 class WPlaceBot {
   title = "";
   unavailableColors = new Set;
@@ -3390,7 +3399,7 @@ Developer will try to fix your save. Be vary that github issues are public, and 
           this.lastColor = color;
         }
         const halfPixel = worldPosition.pixelSize / 2;
-        const position = worldPosition.toScreenPosition();
+        const position = this.followPixel(worldPosition, halfPixel);
         document.documentElement.dispatchEvent(new MouseEvent("mousemove", {
           bubbles: true,
           clientX: position.x + halfPixel,
@@ -3749,6 +3758,14 @@ Developer will try to fix your save. Be vary that github issues are public, and 
   }
   moveMap(delta) {
     this.map.panBy([delta.x, delta.y], { duration: 0 });
+  }
+  followPixel(pixel, halfPixel) {
+    const position = pixel.toScreenPosition();
+    const delta = panToCentral({ x: position.x + halfPixel, y: position.y + halfPixel }, this.map.getCanvas().getBoundingClientRect(), FOLLOW_CENTRAL_SHARE);
+    if (!delta)
+      return position;
+    this.moveMap(delta);
+    return pixel.toScreenPosition();
   }
   fixSpaceInInput(input) {
     input.addEventListener("focus", () => this.closeAll());

@@ -24,6 +24,7 @@ import {
 } from './persistence/schema'
 import { deleteAllData } from './persistence/store'
 import { loadSave, save } from './save'
+import { panToCentral } from './site/projection'
 import { planTemplateSync, type SiteTemplate } from './site/template-data'
 import { SiteTemplates } from './site/templates'
 // @ts-ignore
@@ -43,6 +44,9 @@ import {
   WorldPosition,
   zoomForPixelSize,
 } from './world-position'
+
+/** Pixels outside this middle share of the canvas, per axis, pan the map to center */
+const FOLLOW_CENTRAL_SHARE = 0.5
 
 export type Me = {
   allianceId: number
@@ -400,7 +404,7 @@ export class WPlaceBot {
             this.lastColor = color
           }
           const halfPixel = worldPosition.pixelSize / 2
-          const position = worldPosition.toScreenPosition()
+          const position = this.followPixel(worldPosition, halfPixel)
           document.documentElement.dispatchEvent(
             new MouseEvent('mousemove', {
               bubbles: true,
@@ -938,6 +942,22 @@ export class WPlaceBot {
     // panBy moves the camera, so the content shifts by -delta, which is what
     // the old synthetic drag did too
     this.map.panBy([delta.x, delta.y], { duration: 0 })
+  }
+
+  /**
+   * Screen position of the pixel's corner. A pixel outside the central half of
+   * the canvas first gets the map panned to put it in the middle
+   */
+  protected followPixel(pixel: WorldPosition, halfPixel: number) {
+    const position = pixel.toScreenPosition()
+    const delta = panToCentral(
+      { x: position.x + halfPixel, y: position.y + halfPixel },
+      this.map.getCanvas().getBoundingClientRect(),
+      FOLLOW_CENTRAL_SHARE,
+    )
+    if (!delta) return position
+    this.moveMap(delta)
+    return pixel.toScreenPosition()
   }
 
   /** Close drawing on focus to not consume space */

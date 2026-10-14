@@ -34,6 +34,32 @@ export function fromViewportPosition(map: ProjectionMap, point: Position) {
   }
 }
 
+export type ViewportRect = {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+/**
+ * Screen-space offset that brings `point` to the middle of `rect`, or
+ * `undefined` while it already lies inside the central `share` of both axes
+ */
+export function panToCentral(
+  point: Position,
+  rect: ViewportRect,
+  share: number,
+): Position | undefined {
+  const dx = point.x - (rect.left + rect.width / 2)
+  const dy = point.y - (rect.top + rect.height / 2)
+  if (
+    Math.abs(dx) <= (rect.width * share) / 2 &&
+    Math.abs(dy) <= (rect.height * share) / 2
+  )
+    return undefined
+  return { x: dx, y: dy }
+}
+
 export function pixelCenterToViewport(
   map: ProjectionMap,
   globalX: number,
